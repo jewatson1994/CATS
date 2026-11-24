@@ -101,23 +101,76 @@ def test_discovery_large_input_deployment_settings(filename):
 
 
 @pytest.mark.parametrize("filename", ["templates/compose.local.yaml", "templates/compose.main.yaml"])
-def test_gitlab_import_settings_apply_only_to_public_portal(filename):
+def test_gitlab_import_settings_apply_only_to_gitlab_clients(filename):
     import yaml
     root = Path(__file__).resolve().parents[2]
     services = yaml.safe_load((root / filename).read_text())["services"]
     for setting in ("CATS_DISCOVERY_GITLAB_SOURCES", "CATS_DISCOVERY_GITLAB_CA_FILE"):
-        assert services["portal"]["environment"][setting] == "${" + setting + ":-}"
-        assert all(setting not in (service.get("environment") or {})
-                   for name, service in services.items() if name != "portal")
+        clients = {"portal", "discovery-worker", "polling-worker"}
+        assert {name for name, service in services.items() if setting in (service.get("environment") or {})} == clients
+        for client in clients:
+            assert services[client]["environment"][setting] == "${" + setting + ":-}"
 
 
-def test_optional_gitlab_ca_is_a_read_only_portal_mount():
+def test_optional_gitlab_ca_is_shared_read_only_by_gitlab_clients():
     import yaml
     root = Path(__file__).resolve().parents[2]
     overlay = yaml.safe_load((root / "deploy/compose.discovery-gitlab-ca.yaml").read_text())["services"]
-    assert set(overlay) == {"portal"}
+    assert set(overlay) == {"portal", "polling-worker", "discovery-worker"}
+    assert all(service == overlay["portal"] for service in overlay.values())
     mount, = overlay["portal"]["volumes"]
     assert mount["type"] == "bind"
     assert mount["source"].startswith("${CATS_DISCOVERY_GITLAB_CA_FILE:?")
     assert mount["target"] == overlay["portal"]["environment"]["CATS_DISCOVERY_GITLAB_CA_FILE"]
     assert mount["read_only"] and not mount["bind"]["create_host_path"]
+
+
+@pytest.mark.parametrize("filename", ["templates/compose.local.yaml", "templates/compose.main.yaml"])
+def test_topic_polling_stages_shared_inputs_without_extra_capabilities(filename):
+    import yaml
+    root = Path(__file__).resolve().parents[2]
+    services = yaml.safe_load((root / filename).read_text())["services"]
+    portal, poller, discovery = (services[name] for name in ("portal", "polling-worker", "discovery-worker"))
+    shared = portal["environment"]["CATS_DISCOVERY_UPLOAD_ROOT"]
+    assert {service["environment"]["CATS_DISCOVERY_UPLOAD_ROOT"] for service in (poller, discovery)} == {shared}
+    gid = portal["environment"]["CATS_DISCOVERY_UPLOAD_WRITER_GID"]
+    assert all("CATS_DISCOVERY_UPLOAD_WRITER_GID" not in (service.get("environment") or {})
+               for name, service in services.items() if name != "portal")
+    assert poller["group_add"] == [gid] and discovery["user"].split(":")[1] == gid
+    assert poller["cap_drop"] == ["ALL"] and not poller.get("cap_add")
+    key = "CATS_TOPIC_SCAN_REGISTRY_PREFIXES"
+    assert {name for name, service in services.items() if key in (service.get("environment") or {})} == {"scan-worker"}
+    assert services["scan-worker"]["environment"][key] == "${CATS_TOPIC_SCAN_REGISTRY_PREFIXES:-}"
+    assert "discovery_uploads:" + shared in poller["volumes"]
+    assert "discovery_uploads:" + shared + ":ro" in discovery["volumes"]
+    queue = portal["environment"]["CATS_PUBLIC_JOB_ROOT"]
+    assert poller["environment"]["CATS_PUBLIC_JOB_ROOT"] == queue
+    assert poller["environment"]["CATS_SCAN_QUEUE_CAPACITY"] == portal["environment"]["CATS_SCAN_QUEUE_CAPACITY"]
+    assert "public_jobs:" + queue in poller["volumes"]
+
+
+@pytest.mark.parametrize("current_gid,mode,change_group,change_mode", [
+    (10003, 0o775, False, False), (10003, 0o755, False, True), (0, 0o755, True, True),
+])
+def test_portal_prepares_only_shared_upload_root(monkeypatch, current_gid, mode, change_group, change_mode):
+    from unittest.mock import Mock
+    from app import discovery_sources
+    directory = "/data/discovery-uploads"
+    fake_os = SimpleNamespace(environ={"CATS_DISCOVERY_UPLOAD_WRITER_GID": "10003",
+                                      "CATS_DISCOVERY_UPLOAD_ROOT": directory},
+                              O_RDONLY=0, O_DIRECTORY=1, O_NOFOLLOW=2, open=Mock(return_value=5),
+                              fstat=Mock(return_value=SimpleNamespace(st_gid=current_gid, st_mode=0o040000 | mode)),
+                              fchown=Mock(), fchmod=Mock(), close=Mock())
+    monkeypatch.setattr(discovery_sources, "os", fake_os)
+    discovery_sources.prepare_shared_upload_root()
+    fake_os.open.assert_called_once_with(directory, 3)
+    fake_os.close.assert_called_once_with(5)
+    assert fake_os.fchown.call_count == int(change_group)
+    if change_group:
+        fake_os.fchown.assert_called_once_with(5, -1, 10003)
+    assert fake_os.fchmod.call_count == int(change_mode)
+    if change_mode:
+        fake_os.fchmod.assert_called_once_with(5, 0o775)
+    fake_os.environ.clear()
+    discovery_sources.prepare_shared_upload_root()
+    assert fake_os.open.call_count == 1

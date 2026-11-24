@@ -1,11 +1,13 @@
 import {StatusBadge} from '../components/ui';
+import {Pager} from '../components/Pager';
+import {usePoll, type PollStatus} from '../hooks/usePoll';
 import {OciGroupPullPolicy} from '../components/OciGroupPullPolicy';
 import {useState} from 'react';
 import type {PageData} from '../api';
 import {AdminNav, Heading} from './admin_shared';
 type Kind='general'|'evidence'|'workflow'|'compliance'|'hardening'|'watchlist';
 interface Rule {severity:string;days?:number;threshold?:number|string;noncompliant?:boolean;editing?:boolean}
-interface PolicyData extends PageData {configuration:Record<string,string>;groups:{id:number;name:string}[];selected_group_id?:number;selected_group?:{id:number;parent_id?:number};may_manage:boolean;may_audit:boolean;may_manage_users:boolean;saved?:boolean;export_templates:{kind:string;name:string;mode:string;source:string;enabled_count:number}[];events:{created_at:string;actor:string;action:string;target_type:string;target_id?:string;detail:unknown}[];shown_count:number;retained_count:number;raw_due_rules:Rule[];epss_rules:Rule[];entries:{id:number;purl:string;ecosystem:string;name:string;version_constraint:string;enabled:boolean}[]}
+interface PolicyData extends PageData {entry_query?:string;entry_page?:number;entry_pages?:number;entry_page_size?:number;entry_total?:number;refresh_job?:RefreshJob|null;configuration:Record<string,string>;groups:{id:number;name:string}[];selected_group_id?:number;selected_group?:{id:number;parent_id?:number};may_manage:boolean;may_audit:boolean;may_manage_users:boolean;saved?:boolean;export_templates:{kind:string;name:string;mode:string;source:string;enabled_count:number}[];events:{created_at:string;actor:string;action:string;target_type:string;target_id?:string;detail:unknown}[];shown_count:number;retained_count:number;raw_due_rules:Rule[];epss_rules:Rule[];entries:{id:number;purl:string;ecosystem:string;name:string;version_constraint:string;enabled:boolean}[]}
 const paths:Record<Kind,string>={general:'general-policy',evidence:'evidence-policy',workflow:'workflow-policy',compliance:'compliance',hardening:'compliance-frameworks',watchlist:'dependency-watchlist'};
 const titles:Record<Kind,string>={general:'General Policy',evidence:'Evidence Policy',workflow:'Workflow Policy',compliance:'Vulnerability Policy',hardening:'Hardening Policy',watchlist:'Dependency Watchlist'};
 function Csrf({data}:{data:PageData}) {return <input type="hidden" name="csrf_token" value={data.csrf_token||''}/>;}
@@ -23,9 +25,83 @@ function Vulnerability({data}:{data:PolicyData}) {
  const [mode,setMode]=useState(data.configuration.compliance_mode==='raw'?'raw':'risk_based');const [raw,setRaw]=useState(data.raw_due_rules);const [epss,setEpss]=useState(data.epss_rules);
  return <form className="vulnerability-editor" method="post" action={`/admin/compliance?group_id=${data.selected_group_id||''}`}><Csrf data={data}/><input type="hidden" name="group_id" value={data.selected_group_id||''}/><fieldset className="policy-mode"><legend>Compliance mode</legend>{[['raw','Raw'],['risk_based','Risk Based']].map(([value,label])=><label key={value}><input type="radio" name="compliance_mode" value={value} checked={mode===value} onChange={()=>setMode(value)}/>{label}</label>)}</fieldset><div hidden={mode!=='raw'}><Rules rows={raw} setRows={setRaw} raw/></div><div hidden={mode==='raw'}><h2>Risk-based controls</h2><Fields data={data} kind="risk"/><Rules rows={epss} setRows={setEpss} raw={false}/></div><button>Save vulnerability policy</button><p>Configure <a href={`/admin/general-policy?group_id=${data.selected_group_id||''}`}>OCI pull requirements</a> in this group's General Policy.</p><p className="muted">Changes are recorded in the audit history.</p></form>;
 }
-function Watchlist({data}:{data:PolicyData}) {
- const entryForm=(entry?:PolicyData['entries'][number])=><form method="post" action="/admin/dependency-watchlist"><Csrf data={data}/>{entry&&<input type="hidden" name="entry_id" value={entry.id}/>}<div className="config-grid">{[['purl','PURL','pkg:pypi/example'],['ecosystem','Ecosystem','python'],['name','Name','example'],['version_constraint','Version constraint','>=1.2.0']].map(([field,label,placeholder])=><label key={field}>{label}<input name={field} defaultValue={entry?.[field as 'name']||''} placeholder={entry?'':placeholder}/></label>)}<label className="policy-check"><input type="checkbox" name="enabled" value="true" defaultChecked={entry?entry.enabled:true}/> Enabled</label></div><button name="action" value="save">{entry?'Save':'Add'}</button>{entry&&<button name="action" value="delete">Delete</button>}</form>;
- return <><p>Watch for selected SBOM components. Matches are warnings and do not affect compliance or publishing.</p><section className="panel padded"><h2>Entries</h2><table><thead><tr>{['PURL','Ecosystem','Name','Version','Status','Actions'].map(v=><th key={v}>{v}</th>)}</tr></thead><tbody>{data.entries.length?data.entries.map(entry=><tr key={entry.id}><td><code>{entry.purl||'—'}</code></td><td>{entry.ecosystem||'—'}</td><td>{entry.name||'—'}</td><td>{entry.version_constraint||'Any'}</td><td><StatusBadge size="sm" value={entry.enabled?'enabled':'disabled'} label={entry.enabled?'Enabled':'Disabled'}/></td><td><details><summary>Edit</summary>{entryForm(entry)}</details></td></tr>):<tr><td colSpan={6}>No watched dependencies configured.</td></tr>}</tbody></table></section><div className="watchlist-tools"><section className="panel padded"><h2>Add entry</h2>{entryForm()}</section><section className="panel padded"><h2>Import</h2><p>TXT uses one name or PURL per line; blank lines and lines starting with # are ignored. CSV columns: <code>purl,ecosystem,name,version_constraint</code>. YAML uses an <code>entries</code> list with those fields.</p><form method="post" action="/admin/dependency-watchlist/import" encType="multipart/form-data"><Csrf data={data}/><label>Watchlist file<input type="file" name="file" accept=".txt,.csv,.yaml,.yml" required/></label><button>Import entries</button></form></section></div></>;
+type WatchlistEntry = PolicyData['entries'][number];
+type RefreshJob = {id: string; status: string; stage?: string; progress?: number; error?: string};
+const watchlistPath = '/admin/dependency-watchlist';
+const refreshPending = (job?: RefreshJob | null) => job?.status === 'queued' || job?.status === 'running';
+
+function WatchlistRefresh({data}: {data: PolicyData}) {
+  const initial = data.refresh_job;
+  const {status, error} = usePoll<PollStatus & {job: RefreshJob | null}>({
+    url: refreshPending(initial) ? '/api/v1/settings/watchlist-refresh' : null,
+    intervalMs: 5000,
+    isTerminal: response => !refreshPending(response.job),
+  });
+  const job = status ? status.job : initial;
+  if (!job) return null;
+  return <div role="status" className="panel-note">
+    <strong>SBOM match refresh</strong> <StatusBadge value={job.status} size="sm"/>
+    {refreshPending(job) && <p>Existing scan results are being updated in the background. You can leave this page.</p>}
+    {job.stage && <span>{job.stage}</span>}
+    {job.status === 'running' && job.progress != null && <progress aria-label="Match refresh progress" max={100} value={job.progress}/>}
+    {job.error && <p>{job.error}</p>}
+    <p><a href={'/jobs?job=' + encodeURIComponent(job.id)}>View refresh job</a></p>
+    {error && <p>Could not refresh job status. Retrying automatically.</p>}
+    {['failed', 'cancelled'].includes(job.status) && <form method="post" action="/admin/dependency-watchlist/refresh">
+      <Csrf data={data}/><button className="secondary-button">Retry refresh</button>
+    </form>}
+  </div>;
+}
+
+function WatchlistForm({data, entry}: {data: PolicyData; entry?: WatchlistEntry}) {
+  const fields = [
+    ['purl', 'PURL', 'pkg:pypi/example'], ['ecosystem', 'Ecosystem', 'python'],
+    ['name', 'Name', 'example'], ['version_constraint', 'Version constraint', '>=1.2.0'],
+  ] as const;
+  return <form method="post" action={watchlistPath}>
+    <Csrf data={data}/>{entry && <input type="hidden" name="entry_id" value={entry.id}/>}
+    <div className="config-grid">{fields.map(([field, label, placeholder]) =>
+      <label key={field}>{label}<input name={field} defaultValue={entry?.[field] || ''} placeholder={entry ? '' : placeholder}/></label>)}
+      <label className="policy-check"><input type="checkbox" name="enabled" value="true" defaultChecked={entry?.enabled ?? true}/> Enabled</label>
+    </div>
+    <button name="action" value="save">{entry ? 'Save' : 'Add'}</button>{entry && <button name="action" value="delete">Delete</button>}
+  </form>;
+}
+
+function WatchlistRow({data, entry}: {data: PolicyData; entry: WatchlistEntry}) {
+  const [opened, setOpened] = useState(false);
+  return <tr><td><code>{entry.purl || '-'}</code></td><td>{entry.ecosystem || '-'}</td><td>{entry.name || '-'}</td>
+    <td>{entry.version_constraint || 'Any'}</td><td><StatusBadge size="sm" value={entry.enabled ? 'enabled' : 'disabled'} label={entry.enabled ? 'Enabled' : 'Disabled'}/></td>
+    <td><details onToggle={event => {if (event.currentTarget.open) setOpened(true);}}><summary>Edit</summary>
+      {opened && <WatchlistForm data={data} entry={entry}/>}</details></td></tr>;
+}
+
+function Watchlist({data}: {data: PolicyData}) {
+  const query = data.entry_query || '';
+  const pageHref = (page: number) => {
+    const params = new URLSearchParams({page: String(page)});
+    if (query) params.set('q', query);
+    return watchlistPath + '?' + params.toString();
+  };
+  return <><p>Watch for selected SBOM components. Matches are warnings and do not affect compliance or publishing.</p>
+    <WatchlistRefresh data={data}/>
+    <section className="panel padded"><h2>Entries</h2>
+      <form action={watchlistPath} method="get" role="search" className="filter-bar">
+        <label>Search entries<input type="search" name="q" defaultValue={query}/></label>
+        <button className="secondary-button">Search</button>{query && <a href={watchlistPath}>Clear search</a>}
+      </form>
+      <table><thead><tr>{['PURL', 'Ecosystem', 'Name', 'Version', 'Status', 'Actions'].map(label => <th key={label}>{label}</th>)}</tr></thead>
+        <tbody>{data.entries.length ? data.entries.map(entry => <WatchlistRow key={entry.id} entry={entry} data={data}/>) :
+          <tr><td colSpan={6}>{query ? 'No entries match your search.' : 'No watched dependencies configured.'}</td></tr>}</tbody></table>
+      {!!data.entry_total && data.entry_page && data.entry_pages && data.entry_page_size && <Pager page={data.entry_page} pageCount={data.entry_pages} total={data.entry_total} pageSize={data.entry_page_size}
+        hrefFor={pageHref} label="Watchlist pages" unit="entries"/>}
+    </section>
+    <div className="watchlist-tools"><section className="panel padded"><h2>Add entry</h2><WatchlistForm data={data}/></section>
+      <section className="panel padded"><h2>Import</h2><p>TXT accepts one name or PURL per line. Blank lines and lines starting with # are ignored.
+        CSV accepts <code>purl,ecosystem,name,version_constraint</code>. YAML accepts an <code>entries</code> list with the same fields.</p>
+        <form method="post" action="/admin/dependency-watchlist/import" encType="multipart/form-data"><Csrf data={data}/>
+          <label>Watchlist file<input type="file" name="file" accept=".txt,.csv,.yaml,.yml" required/></label><button>Import entries</button>
+        </form></section></div></>;
 }
 function WarningPolicy({data}:{data:PolicyData}) {
  let policy:Record<string,boolean> = data.cyber_warning_policy || {};

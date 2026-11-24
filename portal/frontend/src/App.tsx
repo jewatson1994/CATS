@@ -40,6 +40,8 @@ const loaders: Record<string, () => Promise<any>> = {
   './features/general_policy': () => import('./features/general_policy'),
   './features/discovery': () => import('./features/discovery'),
   './features/runtime': () => import('./features/runtime'),
+  './features/topic_polling': () => import('./features/topic_polling'),
+  './features/unclaimed_services': () => import('./features/unclaimed_services'),
   './features/patch': () => import('./features/patch'),
   './features/patch_results': () => import('./features/patch_results'),
   './features/poam': () => import('./features/poam'),
@@ -117,6 +119,8 @@ const WorkflowPolicy = lazyPage('./features/workflow_policy', 'Page');
 const Compliance = lazyPage('./features/compliance', 'Page');
 const ComplianceFrameworks = lazyPage('./features/compliance_frameworks', 'Page');
 const DependencyWatchlist = lazyPage('./features/dependency_watchlist', 'Page');
+const TopicPolling = lazyPage('./features/topic_polling', 'Page');
+const UnclaimedServices = lazyPage('./features/unclaimed_services', 'Page');
 /** Fetch every lazy chunk once the browser is idle, so later navigation never waits on one. */
 /** Load the chunk of the page a document was served with (before first render). */
 export function preparePage(envelope: PageEnvelope | null | undefined): Promise<unknown> {
@@ -132,7 +136,7 @@ const routes = new Set(['/patch-campaigns', '/artifact-catalog', '/admin/risk-po
   '/cyber-approvals', '/approved-releases', '/imported-releases', '/admin/approved-release-destinations',
   '/jobs', '/poam', '/remediations', '/requests', '/admin', '/admin/staging', '/admin/audit', '/admin/configuration', '/admin/diagnostics',
   '/admin/validators', '/admin/general-policy', '/admin/evidence-policy', '/admin/workflow-policy', '/admin/compliance',
-  '/admin/compliance-frameworks', '/admin/dependency-watchlist']);
+  '/admin/compliance-frameworks', '/admin/dependency-watchlist', '/admin/topic-polling', '/unclaimed-services']);
 /** Only page routes are intercepted. Export, auth and artifact links remain native. */
 export const isPageRoute = (path: string) => routes.has(path) || [
   /^\/admin\/replica$/, /^\/services\/[^/]+\/cyber-overrides$/,
@@ -160,6 +164,7 @@ const pages: Record<string, ComponentType<{data: PageData}>> = {
   admin: Admin, staging: Staging, configuration: Configuration, validators: Validators, audit: Audit, diagnostics: Diagnostics,
   general_policy: GeneralPolicy, evidence_policy: EvidencePolicy, workflow_policy: WorkflowPolicy,
   compliance: Compliance, compliance_frameworks: ComplianceFrameworks, dependency_watchlist: DependencyWatchlist,
+  topic_polling: TopicPolling, unclaimed_services: UnclaimedServices,
   request_error: ({data}) => <section className="panel padded" role="alert"><h1>{data.title || 'Request could not be completed'}</h1>
     <ErrorDetails diagnostic={data.diagnostic} message={typeof data.detail === 'string' ? data.detail : undefined} admin={data.may_view_diagnostics === true}/><a href={data.home_url || '/'}>Return to CATS</a></section>,
   boozled: ({data}) => <section className="panel padded" role="alert"><h1>Something went wrong</h1>
@@ -168,6 +173,7 @@ const pages: Record<string, ComponentType<{data: PageData}>> = {
 
 /** Readable browser tab titles: page name, then the service it concerns, then CATS. */
 const pageNames: Record<string, string> = {
+  topic_polling: 'GitLab topic polling', unclaimed_services: 'Unclaimed Services',
   replica: 'OCI monitoring', cyber_overrides: 'Cyber overrides', imported_releases: 'Imported approved releases',
   dashboard: 'Services', home: 'Overview', login: 'Sign in', password: 'Change password', appearance: 'Appearance',
   cybersecurity: 'Cybersecurity dashboard', cyber_approvals: 'Approvals', approved_releases: 'Approved Releases',

@@ -47,6 +47,8 @@ services:
 
   portal:
     logging: *cats_component_logging
+    # Prefer interactive requests when the host is CPU-bound.
+    cpu_shares: 2048
     image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
     entrypoint: []
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers", "--ssl-certfile", "/app/certs/tls.crt", "--ssl-keyfile", "/app/certs/tls.key"]
@@ -153,6 +155,7 @@ services:
       CATS_SCAN_LEASE_SECONDS: ${CATS_SCAN_LEASE_SECONDS:-90}
       CATS_SCAN_JOB_TIMEOUT: ${CATS_SCAN_JOB_TIMEOUT:-10800}
       CATS_SCAN_WORKER_CREDENTIALS: ${CATS_SCAN_WORKER_CREDENTIALS:-}
+      CATS_PUBLIC_MAX_IMAGES: ${CATS_PUBLIC_MAX_IMAGES:-50}
       CATS_SCAN_QUEUE_CAPACITY: ${CATS_SCAN_QUEUE_CAPACITY:-100}
       CATS_SCAN_ANONYMOUS_QUEUE_CAPACITY: ${CATS_SCAN_ANONYMOUS_QUEUE_CAPACITY:-10}
       CATS_SCAN_PREPARATION_TTL_SECONDS: ${CATS_SCAN_PREPARATION_TTL_SECONDS:-900}
@@ -371,6 +374,7 @@ services:
     environment:
       <<: *portal_environment
       CATS_IMAGE: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
+      CATS_DISCOVERY_UPLOAD_WRITER_GID: "10003"
       CATS_DISCOVERY_GITLAB_SOURCES: ${CATS_DISCOVERY_GITLAB_SOURCES:-}
       CATS_DISCOVERY_GITLAB_CA_FILE: ${CATS_DISCOVERY_GITLAB_CA_FILE:-}
       SESSION_COOKIE_SECURE: "true"
@@ -656,6 +660,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cats}@db:5432/${POSTGRES_DB:-cats}
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      CATS_DISCOVERY_GITLAB_SOURCES: ${CATS_DISCOVERY_GITLAB_SOURCES:-}
+      CATS_DISCOVERY_GITLAB_CA_FILE: ${CATS_DISCOVERY_GITLAB_CA_FILE:-}
       CATS_CONFIG_ENCRYPTION_KEY: ${CATS_CONFIG_ENCRYPTION_KEY:?Set CATS_CONFIG_ENCRYPTION_KEY in .env}
       CATS_DISCOVERY_UPLOAD_ROOT: /data/discovery-uploads
       CATS_DISCOVERY_MAX_UPLOAD_BYTES: ${CATS_DISCOVERY_MAX_UPLOAD_BYTES:-0}
@@ -742,6 +748,7 @@ services:
       CATS_SCAN_DISK_BYTES: ${CATS_SCAN_DISK_BYTES:-21474836480}
       CATS_SCANNER_RUNNER: ${CATS_SCANNER_RUNNER:-/usr/local/bin/cats-scan}
       CATS_IMAGE_SOURCE: daemonless
+      CATS_TOPIC_SCAN_REGISTRY_PREFIXES: ${CATS_TOPIC_SCAN_REGISTRY_PREFIXES:-}
       DOCKER_CONFIG: /run/cats-scan-control/registry-auth
       GRYPE_DB_CACHE_DIR: /var/lib/cats-scan/cache/grype
       GRYPE_DB_METADATA: /var/lib/cats-scan/cache/grype/latest.json
@@ -932,6 +939,79 @@ services:
     cpus: ${CATS_INTELLIGENCE_IMPORT_CPUS:-1.0}
     mem_limit: ${CATS_INTELLIGENCE_IMPORT_MEMORY:-2g}
     restart: on-failure:3
+
+  settings-worker:
+    logging: *cats_component_logging
+    <<: *background_worker
+    command: ["python", "-m", "app.settings_worker"]
+    environment: &job_worker_environment
+      CATS_MODE: ${CATS_MODE:-full}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cats}@db:5432/${POSTGRES_DB:-cats}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      CATS_JOB_QUEUE_CAPACITY: ${CATS_JOB_QUEUE_CAPACITY:-200}
+      CATS_JOB_LEASE_SECONDS: ${CATS_JOB_LEASE_SECONDS:-120}
+      CATS_DB_POOL_SIZE: 2
+      CATS_DB_MAX_OVERFLOW: 0
+      CATS_DB_BACKGROUND_POOL_SIZE: 2
+      CATS_DB_BACKGROUND_MAX_OVERFLOW: 0
+    volumes: []
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    cpu_shares: 256
+    cpus: ${CATS_SETTINGS_CPUS:-1.0}
+    mem_limit: ${CATS_SETTINGS_MEMORY:-1g}
+    pids_limit: 128
+
+  polling-worker:
+    logging: *cats_component_logging
+    <<: *background_worker
+    command: ["python", "-m", "app.polling_worker"]
+    group_add: ["10003"]
+    environment:
+      <<: [*job_worker_environment, *intelligence_environment]
+      CATS_DB_BACKGROUND_POOL_SIZE: 4
+      CATS_DISCOVERY_UPLOAD_ROOT: /data/discovery-uploads
+      CATS_DISCOVERY_MAX_UPLOAD_BYTES: ${CATS_DISCOVERY_MAX_UPLOAD_BYTES:-0}
+      CATS_PUBLIC_JOB_ROOT: /tmp/cats-public-jobs
+      CATS_SCAN_QUEUE_CAPACITY: ${CATS_SCAN_QUEUE_CAPACITY:-100}
+      CATS_PUBLIC_MAX_IMAGES: ${CATS_PUBLIC_MAX_IMAGES:-50}
+      CATS_DISCOVERY_GITLAB_SOURCES: ${CATS_DISCOVERY_GITLAB_SOURCES:-}
+      CATS_DISCOVERY_GITLAB_CA_FILE: ${CATS_DISCOVERY_GITLAB_CA_FILE:-}
+      CATS_CONFIG_ENCRYPTION_KEY: ${CATS_CONFIG_ENCRYPTION_KEY:?Set CATS_CONFIG_ENCRYPTION_KEY in .env}
+      CATS_REPLICA_SYNC_ENABLED: ${CATS_REPLICA_SYNC_ENABLED:-true}
+      CATS_POLLING_VERIFY_DIR: /var/cache/cats-polling/verify
+      CATS_REPLICA_STORAGE: /tmp/cats-remediation-jobs/approved-releases/replica
+      CATS_REPLICA_DISCOVERY_MAX_PAGES: ${CATS_REPLICA_DISCOVERY_MAX_PAGES:-100}
+      CATS_REPLICA_DISCOVERY_MAX_ENTRIES: ${CATS_REPLICA_DISCOVERY_MAX_ENTRIES:-10000}
+      CATS_REPLICA_DISCOVERY_MAX_RELEASES: ${CATS_REPLICA_DISCOVERY_MAX_RELEASES:-10000}
+      CATS_BUNDLE_MAX_RECORDS: ${CATS_BUNDLE_MAX_RECORDS:-100000}
+      CATS_BUNDLE_MAX_JSON_NODES: ${CATS_BUNDLE_MAX_JSON_NODES:-2000000}
+      CATS_BUNDLE_MAX_BYTES: ${CATS_BUNDLE_MAX_BYTES:-104857600}
+      INTELLIGENCE_DB_POOL_SIZE: 2
+      INTELLIGENCE_DB_MAX_OVERFLOW: 0
+      INTELLIGENCE_DB_BACKGROUND_POOL_SIZE: 2
+      INTELLIGENCE_DB_BACKGROUND_MAX_OVERFLOW: 0
+    volumes:
+      - remediation_jobs:/tmp/cats-remediation-jobs
+      - discovery_uploads:/data/discovery-uploads
+      - public_jobs:/tmp/cats-public-jobs
+      - /var/cache/cats-polling
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    cpu_shares: 256
+    cpus: ${CATS_POLLING_CPUS:-1.0}
+    mem_limit: ${CATS_POLLING_MEMORY:-4g}
+    pids_limit: 128
 
   security-data-worker:
     logging: *cats_component_logging

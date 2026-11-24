@@ -49,11 +49,20 @@ def test_shared_image_and_legacy_settings_keep_replica_isolated(tmp_path, compos
     assert result.returncode == 0, result.stderr
     services = json.loads(result.stdout)["services"]
     assert services["portal"]["environment"]["CATS_IMAGE"] == expected
-    expected_services = {"portal", "oci-proxy", "db", "replica-audit-reporter", "component-log-collector"}
+    expected_services = {"portal", "oci-proxy", "db", "polling-worker", "replica-audit-reporter", "component-log-collector"}
     if compose_file == "templates/compose.replica.yaml":
         expected_services.add("nginx")
     assert set(services) == expected_services
     assert services["replica-audit-reporter"]["image"] == expected
+    assert services["component-log-collector"]["image"] == expected
+    worker = services["polling-worker"]
+    assert worker["image"] == expected
+    assert worker["entrypoint"] == [] and worker["command"] == ["python", "-m", "app.polling_worker"]
+    assert worker["environment"]["CATS_MODE"] == "replica"
+    assert not worker.get("ports")
+    assert {(v["type"], v.get("source"), v["target"]) for v in worker["volumes"]} == {
+        ("volume", "replica_evidence", "/var/lib/cats"), ("volume", None, "/var/cache/cats-polling")
+    }
     for name, module in (("portal", "app.main:app"), ("oci-proxy", "app.oci_proxy:app")):
         service = services[name]
         assert service["image"] == expected

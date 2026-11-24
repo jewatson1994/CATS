@@ -20,6 +20,16 @@ it('groups existing destinations and marks the active child and group', () => {
   expect(screen.queryByRole('link', {name: 'Administration'})).not.toBeInTheDocument();
 });
 
+it('shows the Unclaimed Services queue only for operators in full mode', () => {
+  const view = render(<Shell data={{...data, may_view_unclaimed:true}}>Content</Shell>);
+  fireEvent.click(screen.getByText('More', {selector:'summary'}));
+  expect(screen.getByRole('link', {name:'Unclaimed Services'})).toHaveAttribute('href','/unclaimed-services');
+  view.rerender(<Shell data={{...data, cats_mode:'replica', may_view_unclaimed:true}}>Content</Shell>);
+  expect(screen.queryByText('Unclaimed Services')).not.toBeInTheDocument();
+  view.rerender(<Shell data={data}>Content</Shell>);
+  expect(screen.queryByText('Unclaimed Services')).not.toBeInTheDocument();
+});
+
 it('closes disclosures on Escape, outside click and navigation, restoring Escape focus', () => {
   render(<Shell data={data}>Content</Shell>);
   const summary = screen.getByText('More', {selector: 'summary'});

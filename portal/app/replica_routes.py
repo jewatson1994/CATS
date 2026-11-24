@@ -6,6 +6,7 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy import select
 
 from .auth import AuthContext, require_user, record_audit
@@ -14,7 +15,7 @@ from .models import Service
 from .oci_models import OCIUpstream, OCIRepository, is_project_pattern
 from .oci_transport import REPOSITORY
 from .operating_mode import mode
-from .replica_models import ReplicaSource, ReplicaRelease, ReplicaServiceState
+from .replica_models import ReplicaSource, ReplicaRelease, ReplicaServiceState, reserve_sqlite_writer
 from .replica_integrity import verify_record, digest
 from .replica_sync import enqueue, KIND, FAILURE_MESSAGES
 from .durable_jobs import DurableJob
@@ -52,11 +53,13 @@ async def data(request, auth):
         raise HTTPException(422, 'Expected a JSON object') from None
 
 
-def configure(db, auth, payload, source=None):
-    if source is not None:
+def configure(db, auth, payload, source_id=None):
+    reserve_sqlite_writer(db)
+    source = None
+    if source_id is not None:
         # Serialize configuration against a first import binding this source.
         # Refresh an already-loaded row after waiting for the import to commit.
-        source = db.scalar(select(ReplicaSource).where(ReplicaSource.id == source.id)
+        source = db.scalar(select(ReplicaSource).where(ReplicaSource.id == source_id)
                            .with_for_update().execution_options(populate_existing=True))
         if source is None:
             raise HTTPException(404, 'Source not found')
@@ -113,16 +116,13 @@ def registries(auth: AuthContext = Depends(require_user), db=Depends(get_db)):
 @router.post('/sources')
 async def create_source(request: Request, auth: AuthContext = Depends(require_user), db=Depends(get_db)):
     require(auth, 'replica.admin')
-    return configure(db, auth, await data(request, auth))
+    return await run_in_threadpool(configure, db, auth, await data(request, auth))
 
 
 @router.put('/sources/{identity}')
 async def update_source(identity: int, request: Request, auth: AuthContext = Depends(require_user), db=Depends(get_db)):
     require(auth, 'replica.admin')
-    source = db.get(ReplicaSource, identity)
-    if source is None:
-        raise HTTPException(404, 'Source not found')
-    return configure(db, auth, await data(request, auth), source)
+    return await run_in_threadpool(configure, db, auth, await data(request, auth), identity)
 
 
 @router.post('/sync')
@@ -131,14 +131,20 @@ async def synchronize(request: Request, auth: AuthContext = Depends(require_user
     payload = await data(request, auth)
     if set(payload) - {'source_id'} or (payload.get('source_id') is not None and type(payload['source_id']) is not int):
         raise HTTPException(422, 'Choose a replica source')
+    return await run_in_threadpool(_queue_sync, db, auth, payload.get('source_id'))
+
+
+def _queue_sync(db, auth, source_id):
+    reserve_sqlite_writer(db)
     query = select(ReplicaSource).where(ReplicaSource.enabled.is_(True))
-    if payload.get('source_id') is not None:
-        query = query.where(ReplicaSource.id == payload['source_id'])
-    selected = list(db.scalars(query))
+    if source_id is not None:
+        query = query.where(ReplicaSource.id == source_id)
+    # Acquire every source lock before the shared queue's admission lock.
+    selected = list(db.scalars(query.order_by(ReplicaSource.id).with_for_update()))
     if not selected:
         raise HTTPException(404, 'Enabled source not found')
     jobs = [enqueue(db, source, auth.user.id) for source in selected]
-    record_audit(db, auth, 'replica.sync.requested', 'replica_source', payload.get('source_id'), jobs=[job.id for job in jobs])
+    record_audit(db, auth, 'replica.sync.requested', 'replica_source', source_id, jobs=[job.id for job in jobs])
     db.commit()
     return {'jobs': [fields(job, ('id','status','stage','progress')) for job in jobs]}
 

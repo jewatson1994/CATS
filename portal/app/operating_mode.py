@@ -64,15 +64,18 @@ _LOCAL_WRITES = (
     ("POST", r"/api/services/[^/]+/local-overrides(?:/\d+/revoke)?"),
 )
 _LOCAL_WRITE_PATTERNS = tuple((method, re.compile(path)) for method, path in _LOCAL_WRITES)
-_FULL_ONLY_PAGES = frozenset({"/scan", "/patch", "/sbom", "/discovery", "/patch-campaigns", "/risk-intelligence", "/admin/validators", "/admin/staging"})
+_FULL_ONLY_PAGES = frozenset({"/scan", "/patch", "/sbom", "/discovery", "/patch-campaigns", "/risk-intelligence",
+                              "/admin/validators", "/admin/staging", "/unclaimed-services", "/admin/topic-polling"})
 
 
 def request_available(method: str, path: str) -> bool:
     if not is_replica():
         return True
-    if path.startswith(("/api/admin/log-forwarding/", "/api/v1/component-logs/")):
+    if re.match(r"^/api/(?:admin/log-forwarding|v1/component-logs)(?:/|$)", path):
         return path == "/api/admin/log-forwarding/relay" and method in {"GET", "HEAD", "OPTIONS"}
-    if path in _FULL_ONLY_PAGES or re.fullmatch(r"(?:/api/public/(?:jobs|patch-jobs)/.*|/exports/.*|/poam/(?:services/[^/]+/)?export\.xlsx|/services/[^/]+/(?:exports/.*|export\.xlsx|bundle\.zip|helm-diagram\.svg))", path):
+    if (path.rstrip("/") in _FULL_ONLY_PAGES
+            or re.match(r"^/api/(?:admin/topic-polling|unclaimed-services)(?:/|$)", path)
+            or re.fullmatch(r"(?:/api/public/(?:jobs|patch-jobs)/.*|/exports/.*|/poam/(?:services/[^/]+/)?export\.xlsx|/services/[^/]+/(?:exports/.*|export\.xlsx|bundle\.zip|helm-diagram\.svg))", path)):
         return False
     if method in {"GET", "HEAD", "OPTIONS"}:
         return True

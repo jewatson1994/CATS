@@ -1,4 +1,4 @@
-# Standalone replica: portal, read-only OCI proxy, and a dedicated database.
+# Standalone replica with a portal, signed-release polling worker, read-only OCI proxy and database.
 # Setup: docs/oci-replica-deployment-runbook.md; settings: templates/replica.external-ingress.env.example.
 # Run from the repository root with --project-directory . --env-file .env.replica.
 # docker compose --project-directory . --env-file .env.replica -f templates/compose.replica.external-ingress.yaml up -d --wait
@@ -19,9 +19,11 @@ x-cats-component-logging: &cats_component_logging
     labels: "com.docker.compose.service,com.docker.compose.project"
 
 services:
-  # 1. Portal — browse retained evidence and administer replica synchronization.
+  # Portal — browse retained evidence and administer replica synchronization.
   portal:
     logging: *cats_component_logging
+    # Prefer interactive requests when the host is CPU-bound.
+    cpu_shares: 2048
     image: ${CATS_IMAGE:-${CATS_REPLICA_IMAGE:?Set CATS_IMAGE to the full CATS image}}
     entrypoint: []
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]
@@ -79,7 +81,49 @@ services:
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
 
-  # 2. OCI access — enforce release approval and serve verified local content.
+  polling-worker:
+    logging: *cats_component_logging
+    image: ${CATS_IMAGE:-${CATS_REPLICA_IMAGE:?Set CATS_IMAGE to the full CATS image}}
+    entrypoint: []
+    command: ["python", "-m", "app.polling_worker"]
+    environment:
+      CATS_MODE: replica
+      CATS_ENV: production
+      CATS_DEPLOYMENT_VALIDATION_ENABLED: "false"
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cats}@db:5432/${POSTGRES_DB:-cats}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      CATS_CONFIG_ENCRYPTION_KEY: ${CATS_CONFIG_ENCRYPTION_KEY:?Set CATS_CONFIG_ENCRYPTION_KEY}
+      CATS_APPROVED_RELEASE_ROOT: /var/lib/cats/releases
+      CATS_REPLICA_STORAGE: /var/lib/cats/replica
+      CATS_REPLICA_DISCOVERY_MAX_PAGES: ${CATS_REPLICA_DISCOVERY_MAX_PAGES:-100}
+      CATS_REPLICA_DISCOVERY_MAX_ENTRIES: ${CATS_REPLICA_DISCOVERY_MAX_ENTRIES:-10000}
+      CATS_REPLICA_DISCOVERY_MAX_RELEASES: ${CATS_REPLICA_DISCOVERY_MAX_RELEASES:-10000}
+      CATS_POLLING_VERIFY_DIR: /var/cache/cats-polling/verify
+      CATS_REPLICA_SYNC_ENABLED: ${CATS_REPLICA_SYNC_ENABLED:-true}
+      CATS_DB_POOL_SIZE: 2
+      CATS_DB_MAX_OVERFLOW: 0
+      CATS_DB_BACKGROUND_POOL_SIZE: 2
+      CATS_DB_BACKGROUND_MAX_OVERFLOW: 0
+    volumes:
+      - replica_evidence:/var/lib/cats
+      - /var/cache/cats-polling
+    depends_on:
+      portal:
+        condition: service_healthy
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    cpu_shares: 256
+    cpus: ${CATS_POLLING_CPUS:-1.0}
+    mem_limit: ${CATS_POLLING_MEMORY:-4g}
+    pids_limit: 128
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  # OCI access — enforce release approval and serve verified local content.
   oci-proxy:
     logging: *cats_component_logging
     image: ${CATS_IMAGE:-${CATS_REPLICA_IMAGE:?Set CATS_IMAGE to the full CATS image}}
@@ -132,7 +176,7 @@ services:
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
 
-  # 3. Database — local accounts, replica state, and authorization records.
+  # Database — local accounts, replica state, and authorization records.
   db:
     logging: *cats_component_logging
     image: postgres:16

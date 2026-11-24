@@ -45,3 +45,31 @@ def test_postgresql_connections_disable_jit_unless_configured(monkeypatch):
     assert database._postgresql_options("sqlite:///./cats.db") == {}
     monkeypatch.setenv("CATS_DB_JIT", "server")
     assert database._postgresql_options("postgresql+psycopg://cats@db/cats") == {}
+
+
+def test_sqlite_wal_is_opt_in_persistent_and_skips_memory(tmp_path, monkeypatch):
+    from app.exchange_migrations import migration_transaction
+
+    db_file = tmp_path / "development.db"
+    bind = create_engine("sqlite:///" + db_file.as_posix())
+    monkeypatch.delenv("CATS_SQLITE_WAL", raising=False)
+    try:
+        with migration_transaction(bind) as db:
+            db.exec_driver_sql("CREATE TABLE example (id INTEGER PRIMARY KEY)")
+            assert db.exec_driver_sql("PRAGMA journal_mode").scalar() == "delete"
+        monkeypatch.setenv("CATS_SQLITE_WAL", "true")
+        with migration_transaction(bind) as db:
+            db.exec_driver_sql("INSERT INTO example VALUES (42)")
+            assert db.exec_driver_sql("PRAGMA journal_mode").scalar() == "wal"
+        memory = create_engine("sqlite://")
+        try:
+            with migration_transaction(memory) as db:
+                assert db.exec_driver_sql("PRAGMA journal_mode").scalar() == "memory"
+        finally:
+            memory.dispose()
+        monkeypatch.delenv("CATS_SQLITE_WAL")
+        with migration_transaction(bind) as db:
+            assert db.exec_driver_sql("PRAGMA journal_mode").scalar() == "wal"
+            assert db.exec_driver_sql("SELECT id FROM example").scalar() == 42
+    finally:
+        bind.dispose()

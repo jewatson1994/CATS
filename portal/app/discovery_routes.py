@@ -52,10 +52,17 @@ def group_scope(db, auth, group_id):
     if not isinstance(group_id, int) or not permitted_group(auth, group_id) or not db.get(Group, group_id):
         raise HTTPException(403, 'Deployment management permission required for this owning group')
 
-def get_job(db, auth, job_id, lock=False):
+def get_job(db, auth, job_id, lock=False, *, read_claimed=False):
     query = select(DurableJob).where(DurableJob.id == job_id, DurableJob.kind == 'discovery')
     if lock: query = query.with_for_update()
     job = db.scalar(query)
+    if job and job.payload.get('topic_revision_id') is not None:
+        from .topic_intake_models import TopicProject, TopicRevision
+        target = db.scalar(select(TopicProject.service_id).join(TopicRevision, TopicRevision.project_id == TopicProject.id)
+                           .where(TopicRevision.discovery_job_id == job.id, TopicProject.claimed_at.is_not(None)))
+        if read_claimed and target is not None and auth.has('service.view', target):
+            return job
+        raise HTTPException(404, 'Discovery not found')
     if not job or not permitted_group(auth, job.payload.get('group_id')):
         raise HTTPException(404, 'Discovery not found')
     return job
@@ -366,7 +373,7 @@ async def create(request: Request, auth: AuthContext = Depends(require_user), db
 
 @router.get('/{job_id}')
 def detail(job_id: str, auth: AuthContext = Depends(require_user), db=Depends(get_db)):
-    job = get_job(db, auth, job_id)
+    job = get_job(db, auth, job_id, read_claimed=True)
     item = db.scalar(select(DiscoveryInventory).where(DiscoveryInventory.job_id == job.id))
     view = job_view(job)
     if item is not None and item.inventory.get('completeness') != 'invalid':
@@ -582,7 +589,7 @@ async def scan(job_id: str, request: Request, auth: AuthContext = Depends(requir
 def compare(job_id: str, previous_job_id: str, auth: AuthContext = Depends(require_user), db=Depends(get_db)):
     inventories = []
     for identity in (previous_job_id, job_id):
-        job = get_job(db, auth, identity)
+        job = get_job(db, auth, identity, read_claimed=True)
         item = db.scalar(select(DiscoveryInventory).where(DiscoveryInventory.job_id==job.id))
         if not item: raise HTTPException(409, 'Both inventories must exist')
         inventories.append({n['id']:n for n in item.inventory.get('nodes',[])})

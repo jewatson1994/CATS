@@ -1,5 +1,18 @@
 """Helpers for startup DDL that avoids locking already-current tables."""
-from sqlalchemy import text
+from sqlalchemy import inspect, text
+
+
+def upgrade_topic_scopes(connection):
+    """Extend existing group sources and bindings without rewriting scan history."""
+    additions = {
+        "gitlab_topic_sources": {"latest_preview_job_id": "VARCHAR(32) REFERENCES durable_jobs(id)"},
+        "topic_projects": {"claim_group_id": "INTEGER REFERENCES groups(id)", "observed_topics": "JSON"},
+    }
+    for table, columns in additions.items():
+        existing = {column["name"] for column in inspect(connection).get_columns(table)}
+        for name, sql_type in columns.items():
+            if name not in existing:
+                connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}"))
 
 
 def create_index_if_missing(connection, table, name, statement):

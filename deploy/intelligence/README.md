@@ -25,7 +25,7 @@ later does not change an already initialized PostgreSQL user's password.
    For the checked-in Compose stack, run:
 
    ```sh
-   docker compose --project-directory . --env-file .env -f templates/compose.local.yaml stop portal portal-control intelligence-importer discovery-worker remediation-worker risk-worker security-data-worker export-worker provisioning-worker patch-worker scan-worker db-backup
+   docker compose --project-directory . --env-file .env -f templates/compose.local.yaml stop portal portal-control intelligence-importer discovery-worker remediation-worker risk-worker security-data-worker settings-worker polling-worker export-worker provisioning-worker patch-worker scan-worker db-backup
    ```
 
    Also stop any additional replicas or jobs outside this Compose project. Stop the

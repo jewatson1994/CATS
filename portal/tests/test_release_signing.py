@@ -67,6 +67,40 @@ def crypto_cli(monkeypatch):
     return (config, credentials), calls, key_paths
 
 
+def test_polling_verification_uses_private_disk_and_recovers_orphaned_files(release, crypto_cli, monkeypatch, tmp_path):
+    from app import polling_worker, portable_release
+    from app.patch_ownership import ExecutionAlreadyOwned
+
+    manifest, output = release
+    material, calls, _ = crypto_cli
+    signed = release_signing.sign_release_manifest(manifest, output, material)
+    content = manifest.read_bytes()
+    signature = (output / signed["signature_file"]).read_bytes()
+    public = (output / signed["public_key_file"]).read_bytes()
+    fingerprint = signed["key_fingerprint"]
+    scratch = tmp_path / "poll-scratch"
+    monkeypatch.setenv("CATS_POLLING_VERIFY_DIR", str(scratch))
+
+    with polling_worker.verification_workspace():
+        portable_release._verify_blob(content, signature, public, fingerprint)
+        verified_file = Path(calls[-1][-1])
+        assert verified_file.parent.parent == scratch
+        assert not verified_file.parent.exists()
+        with pytest.raises(ValueError, match="signature verification failed"):
+            portable_release._verify_blob(content + b"x", signature, public, fingerprint)
+        assert list(scratch.glob("cats-release-verify-*")) == []
+
+        orphan = scratch / "cats-release-verify-interrupted"
+        orphan.mkdir()
+        (orphan / "content").write_bytes(content)
+        with pytest.raises(ExecutionAlreadyOwned):
+            with polling_worker.verification_workspace():
+                pytest.fail("A second process acquired the active workspace")
+        assert orphan.exists()
+    with polling_worker.verification_workspace():
+        assert not orphan.exists()
+
+
 def test_sign_and_verify_exact_manifest_bytes(release, crypto_cli):
     manifest, output = release
     material, calls, key_paths = crypto_cli

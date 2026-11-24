@@ -23,7 +23,7 @@ read -rsp 'Paste the CATS linking key: ' key
 printf '\n'
 printf '%s' "$key" > "$keyfile"
 unset key
-helm upgrade --install cats-runtime "$CHART" --version 0.2.1 \
+helm upgrade --install cats-runtime "$CHART" --version 0.2.2 \
   --namespace cats-runtime --create-namespace \
   --set-string catsUrl="$CATS_URL" --set-file linkingKey="$keyfile"
 ```
@@ -36,7 +36,7 @@ The `--set-file` form keeps the key out of shell arguments, but Helm stores the 
 kubectl create namespace cats-runtime --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n cats-runtime create secret generic cats-runtime-link \
   --from-file=linking-key="$keyfile"
-helm upgrade --install cats-runtime "$CHART" --version 0.2.1 --namespace cats-runtime \
+helm upgrade --install cats-runtime "$CHART" --version 0.2.2 --namespace cats-runtime \
   --set-string catsUrl="$CATS_URL" --set-string linkingKeySecret=cats-runtime-link
 ```
 
@@ -46,7 +46,7 @@ Transfer the packaged chart and the same CATS release image used by the portal. 
 
 ```bash
 mkdir -p dist
-helm pull oci://ghcr.io/jewatson1994/charts/cats-runtime --version 0.2.1 --destination dist
+helm pull oci://ghcr.io/jewatson1994/charts/cats-runtime --version 0.2.2 --destination dist
 skopeo copy --all "docker://${SOURCE_IMAGE:?Set SOURCE_IMAGE to the CATS release image}" oci:dist/cats-tool:release
 ```
 
@@ -62,7 +62,7 @@ Use that `CATS_IMAGE` in your deployment environment. Create the namespace and b
 
 ```bash
 kubectl -n cats-runtime create secret generic cats-runtime-ca --from-file=ca.crt=site-ca.pem
-helm upgrade --install cats-runtime ./dist/cats-runtime-0.2.1.tgz --namespace cats-runtime \
+helm upgrade --install cats-runtime ./dist/cats-runtime-0.2.2.tgz --namespace cats-runtime \
   --set-string catsUrl=https://cats.internal.example.org \
   --set-string linkingKeySecret=cats-runtime-link \
   --set-string caSecret=cats-runtime-ca \
@@ -86,7 +86,7 @@ The chart uses one nonroot replica, a read-only root filesystem, dropped capabil
 
 ### Discovery, upgrades and interrupted connectivity
 
-Upgrade the portal to a unified release that contains the runtime agent before installing chart 0.2.1. If an earlier installation set a custom collector image, supply the new CATS image with `image.reference` during the upgrade. Keep the same release, namespace, endpoint and persistent volume. The chart updates the existing read-only role and reuses the enrolled credential. Use `helm history cats-runtime -n cats-runtime` to find the previous revision. If a rollback is needed, first allow queued reports to drain, then run `helm rollback cats-runtime REVISION -n cats-runtime`. A previous Pod-only collector can report container inventory to the upgraded portal. It cannot confirm removal of a discovered controller.
+Upgrade the portal to a unified release that contains the runtime agent before installing chart 0.2.2. If an earlier installation set a custom collector image, supply the new CATS image with `image.reference` during the upgrade. Keep the same release, namespace, endpoint and persistent volume. The chart updates the existing read-only role and reuses the enrolled credential. Use `helm history cats-runtime -n cats-runtime` to find the previous revision. If a rollback is needed, first allow queued reports to drain, then run `helm rollback cats-runtime REVISION -n cats-runtime`. A previous Pod-only collector can report container inventory to the upgraded portal. It cannot confirm removal of a discovered controller.
 
 The collector watches Kubernetes metadata for changes, coalesces bursts, then lists fresh snapshots. Its regular reporting interval also triggers a full reconciliation. A watch failure falls back to periodic lists. An expired resource version starts another list. Snapshot collection projects only names, identities, ownership, selected app/Helm labels, release annotations, the numeric `cats.io/service-id` hint, an optional lowercase SHA-256 `cats.io/chart-digest` annotation, requested images and runtime status. Namespaced owner UIDs connect ReplicaSets to Deployments and Jobs to CronJobs. Template components remain visible at zero replicas. An empty namespace contributes no application.
 

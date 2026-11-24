@@ -23,10 +23,25 @@ it('shows scoped parent/template/audit controls according to permissions',()=>{
  expect(container.querySelector('form[action="/admin/audit-policy?group_id=2"]')).toBeInTheDocument();expect(screen.getByText('Recent audit activity')).toBeInTheDocument();
  rerender(<PolicyPage data={{...data,may_manage:false,may_audit:true}} kind="general"/>);expect(screen.queryByTestId('group-oci-policy')).not.toBeInTheDocument();expect(screen.queryByText('Save audit policy')).not.toBeInTheDocument();expect(screen.getByText('Recent audit activity')).toBeInTheDocument();
 });
-it('preserves watchlist edit/delete and multipart import names',()=>{
+it('mounts watchlist editors on demand and preserves edit/delete and multipart import fields',async ()=>{
  const {container}=render(<PolicyPage data={{...data,entries:[{id:8,purl:'pkg:pypi/example',ecosystem:'python',name:'example',version_constraint:'>=1',enabled:false}]}} kind="watchlist"/>);
- const edit=screen.getByText('Delete').closest('form')!;expect(new FormData(edit).get('entry_id')).toBe('8');expect(new FormData(edit).has('enabled')).toBe(false);expect(screen.getByText('Delete')).toHaveAttribute('name','action');
+ expect(screen.queryByText('Delete')).toBeNull();
+ fireEvent.click(screen.getByText('Edit'));
+ const edit=(await screen.findByText('Delete')).closest('form')!;expect(new FormData(edit).get('entry_id')).toBe('8');expect(new FormData(edit).has('enabled')).toBe(false);expect(screen.getByText('Delete')).toHaveAttribute('name','action');
  expect(container.querySelector('form[enctype="multipart/form-data"]')).toHaveAttribute('action','/admin/dependency-watchlist/import');expect(screen.getByLabelText('Watchlist file')).toHaveAttribute('name','file');expect(screen.getByLabelText('Watchlist file')).toBeRequired();
+});
+it('keeps the watchlist filter when navigating through entries and reads job status without reloading the list', async ()=>{
+ const fetchStatus=vi.spyOn(window,'fetch').mockResolvedValue(new Response(JSON.stringify({
+   job:{id:'job-1',status:'completed',stage:'Finished updating scans'},revision:'complete',
+ }),{headers:{'Content-Type':'application/json'}}));
+ try {
+   render(<PolicyPage data={{...data,entry_query:'pkg:test',entry_page:1,entry_pages:2,entry_total:51,entry_page_size:50,
+     refresh_job:{id:'job-1',status:'queued'}}} kind="watchlist"/>);
+   expect(screen.getByRole('link',{name:'Next page'})).toHaveAttribute('href','/admin/dependency-watchlist?page=2&q=pkg%3Atest');
+   expect(await screen.findByText('Finished updating scans')).toBeVisible();
+   expect(fetchStatus).toHaveBeenCalledTimes(1);
+   expect(String(fetchStatus.mock.calls[0][0])).toContain('/api/v1/settings/watchlist-refresh');
+ } finally {fetchStatus.mockRestore();}
 });
 it('retains evidence, workflow and hardening field names and bounds',()=>{
  const {rerender,container}=render(<PolicyPage data={{...data,configuration:{skipped_images_incomplete:'false',incomplete_noncompliant:'true'}}} kind="evidence"/>);
@@ -35,6 +50,13 @@ it('retains evidence, workflow and hardening field names and bounds',()=>{
  expect(screen.getByLabelText('Maximum exception duration (days)')).toHaveAttribute('min','0');expect(screen.getByLabelText('Warning window (days)')).toHaveAttribute('max','3650');
  rerender(<PolicyPage data={{...data,configuration:{hardening_overdue_days:'90',hardening_noncompliant:'false'}}} kind="hardening"/>);
  expect(screen.getByLabelText('Overdue hardening treatment')).toHaveValue('false');expect(container.querySelector('form[method=post]')).toHaveAttribute('action','/admin/compliance-frameworks?group_id=2');
+});
+it('allows a failed watchlist refresh to be retried without editing rules', ()=>{
+ render(<PolicyPage data={{...data,refresh_job:{id:'f',status:'failed',error:'Worker stopped'}}} kind="watchlist"/>);
+ const form=screen.getByRole('button',{name:'Retry refresh'}).closest('form')!;
+ expect(form).toHaveAttribute('action','/admin/dependency-watchlist/refresh');
+ expect(new FormData(form).get('csrf_token')).toBe('csrf');
+ expect(screen.getByText('Worker stopped')).toBeVisible();
 });
 
 it('keeps global warning selections in Workflow independently of group scope',()=>{

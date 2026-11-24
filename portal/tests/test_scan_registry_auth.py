@@ -79,3 +79,92 @@ def test_public_scan_does_not_read_service_credentials(worker_harness, monkeypat
     monkeypatch.setattr(scan_worker, "load_registry_credentials", unexpected)
     worker.execute(job)
     assert processes and uploaded
+
+
+@pytest.mark.parametrize("prefix", ["registry.example", "*.example/platform", "registry.example/*", "ubuntu/library",
+                                    "https://registry.example/platform", "registry.example/platform:latest",
+                                    "user:pass@registry.example/platform", "registry.example:99999/platform"])
+def test_invalid_topic_prefix_fails_closed(prefix, monkeypatch):
+    from app.scan_registry_auth import topic_registry_prefixes
+    monkeypatch.setenv("CATS_TOPIC_SCAN_REGISTRY_PREFIXES", prefix)
+    with pytest.raises(RegistryConfigurationError, match="CATS_TOPIC_SCAN_REGISTRY_PREFIXES"):
+        topic_registry_prefixes()
+
+
+def test_topic_broker_scopes_aliases_ports_and_all_repositories_on_each_host(tmp_path, monkeypatch):
+    from app.scan_registry_auth import topic_auth_entries, topic_credential_hosts
+    first = "registry.example/platform/payments@sha256:" + "a" * 64
+    second = "docker.io/team/api:1.0"
+    images = [first, second, "busybox:latest", "other.example:5000/allowed/image:v2",
+              "registry.example:443/platform-private/tool", "unknown.example/a/b"]
+    monkeypatch.setenv("CATS_TOPIC_SCAN_REGISTRY_PREFIXES",
+                       "registry.example/platform,docker.io/team,other.example:5000/allowed")
+    (tmp_path / "images.txt").write_text("\n".join(images) + "\n")
+    payload = {"job_kind": "scan", "image_list": "\n".join(images)}
+    allowed = topic_credential_hosts({"job": payload, "topic_intake_verified": True}, tmp_path)
+    assert allowed == {"other.example:5000"}
+    creds = {"auths": {host: {"auth": host} for host in
+              ("registry.example", "https://index.docker.io/v1/", "unknown.example",
+               "other.example:5000", "https://other.example:5000/private", "http://other.example:5000")},
+             "credsStore": "other", "credHelpers": {"unlisted.example": "helper"}}
+    assert topic_auth_entries(creds, allowed) == {"other.example:5000": {"auth": "other.example:5000"}}
+    monkeypatch.setenv("CATS_TOPIC_SCAN_REGISTRY_PREFIXES", "docker.io/library")
+    alias = "registry-1.docker.io/busybox:latest"
+    (tmp_path / "images.txt").write_text(alias + "\n")
+    payload["image_list"] = alias
+    assert not topic_credential_hosts({"job": payload, "topic_intake_verified": True}, tmp_path)
+    # Docker Hub's config key and image-reference aliases use the same denial boundary.
+    assert topic_auth_entries(creds, {"docker.io"}) == {"https://index.docker.io/v1/": {"auth": "https://index.docker.io/v1/"}}
+
+
+@pytest.mark.parametrize("failure", ["unverified", "changed-inputs", "chart", "archive", "component", "compose"])
+def test_topic_registry_credentials_require_bound_image_only_inputs(failure, tmp_path, monkeypatch):
+    from app.scan_registry_auth import topic_credential_hosts
+    ref = "registry.example/platform/payments:1"
+    claim = {"topic_intake_verified": True, "job": {"job_kind": "scan", "image_list": ref}}
+    monkeypatch.setenv("CATS_TOPIC_SCAN_REGISTRY_PREFIXES", "registry.example/platform")
+    (tmp_path / "images.txt").write_text(ref if failure != "changed-inputs" else "registry.example/other:1")
+    if failure == "unverified":
+        claim["topic_intake_verified"] = False
+    if failure == "chart":
+        claim["job"]["chart_url"] = "oci://registry.example/outside/chart"
+    if failure == "archive":
+        (tmp_path / "image-archives").mkdir()
+    if failure == "component":
+        claim["job"]["definition_component"] = {"reference": "registry.example/outside"}
+    if failure == "compose":
+        claim["job"]["compose_enabled"] = True
+    with pytest.raises(RegistryConfigurationError, match="Topic scan"):
+        topic_credential_hosts(claim, tmp_path)
+
+
+@pytest.mark.parametrize("opt_in", [True, False])
+def test_topic_worker_uses_broker_auth_only_after_opt_in(worker_harness, tmp_path, monkeypatch, opt_in):
+    from app import scan_artifacts
+    scan_worker, worker, job, _, _, uploaded, _, _, _ = worker_harness
+    ref = "registry.example/platform/payments:7"
+    job["topic_intake_verified"] = True
+    job["job"].update(credential_policy="topic", job_kind="scan", image_list=ref)
+    inputs = tmp_path / "worker-input-source"
+    (inputs / "charts" / "values.yaml").unlink()
+    (inputs / "charts").rmdir()
+    (inputs / "images.txt").write_text(ref + "\n")
+    archive = tmp_path / "worker-input.tar.gz"
+    scan_artifacts.pack(inputs, archive, {"job_id": job["job_id"]})
+    job["input_digest"] = scan_artifacts.digest(archive)
+    monkeypatch.setenv("CATS_TOPIC_SCAN_REGISTRY_PREFIXES", "registry.example/platform" if opt_in else "")
+    reads = []
+    def credentials():
+        reads.append(True)
+        return {"auths": {"registry.example": {"auth": "reader"}, "other.example": {"auth": "excluded"}}}
+    monkeypatch.setattr(scan_worker, "load_registry_credentials", credentials)
+    original = scan_worker.subprocess.Popen
+    observed = []
+    def capture(args, **kwargs):
+        config = Path(kwargs["env"]["DOCKER_CONFIG"]) / "config.json"
+        observed.append(json.loads(config.read_text()) if config.exists() else {})
+        return original(args, **kwargs)
+    monkeypatch.setattr(scan_worker.subprocess, "Popen", capture)
+    worker.execute(job)
+    assert uploaded and observed == ([{"auths": {"registry.example": {"auth": "reader"}}}] if opt_in else [{}])
+    assert len(reads) == int(opt_in)

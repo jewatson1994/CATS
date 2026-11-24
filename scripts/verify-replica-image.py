@@ -35,7 +35,10 @@ def isolated_config(config: dict, *, image: str, project: str, docker_root="/var
     """Retain production startup commands and storage, isolate host resources."""
     result = copy.deepcopy(config)
     services = result["services"]
-    if set(services) != {"db", "replica-audit-reporter", "component-log-collector", *APPLICATIONS}:
+    commands = {name: ["uvicorn", app, "--host", "0.0.0.0", "--port", str(port), "--no-proxy-headers"]
+                for name, (app, port) in APPLICATIONS.items()}
+    commands["polling-worker"] = ["python", "-m", "app.polling_worker"]
+    if set(services) != {"db", "replica-audit-reporter", "component-log-collector", *commands}:
         raise ValueError("Unexpected replica Compose services")
     forwarder = services["replica-audit-reporter"]
     if (
@@ -45,7 +48,8 @@ def isolated_config(config: dict, *, image: str, project: str, docker_root="/var
     ):
         raise ValueError("The replica must run the shared image's HQ reporter")
     collector = services["component-log-collector"]
-    if collector.get("image") != image or collector.get("command") != ["python", "-B", "-u", "-m", "app.compose_log_collector"]:
+    if (collector.get("image") != image or collector.get("entrypoint") != []
+            or collector.get("command") != ["python", "-B", "-u", "-m", "app.compose_log_collector"]):
         raise ValueError("The replica must run the shared image's log collector")
     # Place the socket in a disposable named volume, so the Docker daemon can
     # reach it without touching the operator's production socket or host files.
@@ -55,13 +59,12 @@ def isolated_config(config: dict, *, image: str, project: str, docker_root="/var
         if volume.get("type") == "bind" and volume.get("target") == "/run/cats-log-input":
             volume.update(type="volume", source="smoke_log_socket")
             volume.pop("bind", None)
-    for name, (application, port) in APPLICATIONS.items():
+    for name, expected in commands.items():
         service = services[name]
-        expected = ["uvicorn", application, "--host", "0.0.0.0", "--port", str(port), "--no-proxy-headers"]
         if service.get("image") != image:
             raise ValueError(f"{name} does not use the supplied full CATS image")
         if service.get("command") != expected or service.get("entrypoint") != []:
-            raise ValueError(f"{name} must explicitly run the replica uvicorn command")
+            raise ValueError(f"{name} must explicitly run its replica command")
         env = service.get("environment", {})
         if env.get("CATS_MODE") != "replica" or str(env.get("CATS_DEPLOYMENT_VALIDATION_ENABLED")).lower() != "false":
             raise ValueError(f"{name} must disable assessment in replica mode")
@@ -133,9 +136,26 @@ for process in Path('/proc').iterdir():
         'app.scan_worker', 'app.patch_worker', 'app.discovery_worker',
         'app.remediation_worker', 'app.export_worker', 'app.scan_control',
         'app.intelligence_importer', 'app.daily_security_data', 'app.risk_worker',
+        'app.polling_worker', 'app.settings_worker',
         'app.provisioning_worker'))
         for arg in argv), 'Assessment process running: ' + str(argv)
 print(service + ': database ready, replica guard active, no assessment processes')
+'''
+
+
+POLLING_CHECK = r'''
+from pathlib import Path
+from sqlalchemy import select
+from app.database import SessionLocal
+from app.operating_mode import is_replica
+from app.replica_models import ReplicaSource
+assert is_replica()
+assert not Path('/var/run/docker.sock').exists()
+assert any(b'app.polling_worker' in process.read_bytes().split(b'\0')
+           for process in Path('/proc').glob('[0-9]*/cmdline') if process.is_file())
+with SessionLocal() as session:
+    session.execute(select(ReplicaSource.id).limit(1)).all()
+print('polling-worker: replica source storage ready')
 '''
 
 
@@ -182,6 +202,8 @@ def run_smoke(image: str, repo: Path, timeout: int) -> None:
             for service in APPLICATIONS:
                 result = docker(*command, "exec", "-T", service, "python", "-c", CONTAINER_CHECK, service)
                 print(result.stdout.strip())
+            result = docker(*command, "exec", "-T", "polling-worker", "python", "-c", POLLING_CHECK)
+            print(result.stdout.strip())
         except BaseException:
             active_error = True
             logs = docker(*command, "logs", "--no-color", "--tail", "80", check=False)

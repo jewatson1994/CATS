@@ -8,7 +8,8 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from app import main, frontend, replica_sync
-from app.models import DeploymentValidationRun, Execution, Service, ServiceImage, User
+from app.auth import AuthContext
+from app.models import DeploymentValidationRun, Execution, Service, ServiceImage, User, UserSession
 from test_replica_authorization import replica
 
 
@@ -18,18 +19,10 @@ def finish(coroutine):
         coroutine.send(None)
 
 
-def test_full_lifespan_runs_oci_consumer_alongside_normal_workers(monkeypatch):
+def test_full_lifespan_leaves_oci_polling_to_dedicated_worker(monkeypatch):
     monkeypatch.setenv('CATS_MODE', 'full')
     monkeypatch.setenv('INTELLIGENCE_DATABASE_URL', 'sqlite://')
     events, tasks = [], []
-
-    @asynccontextmanager
-    async def consumer():
-        events.append('oci-enter')
-        try:
-            yield
-        finally:
-            events.append('oci-exit')
 
     @asynccontextmanager
     async def previews(_session):
@@ -55,17 +48,17 @@ def test_full_lifespan_runs_oci_consumer_alongside_normal_workers(monkeypatch):
         return task
 
     monkeypatch.setattr(main.asyncio, 'create_task', spawn)
-    monkeypatch.setattr(replica_sync, 'replica_lifespan', consumer)
+    monkeypatch.setattr(replica_sync, 'schedule_due', lambda: pytest.fail('Portal started OCI polling'))
     monkeypatch.setattr(main, 'preview_cleanup_lifespan', previews)
     monkeypatch.setattr(main.validator_management, 'recover_operations', lambda: events.append('recover'))
     monkeypatch.setattr(main, 'DEPLOYMENT_VALIDATION_WORKERS', SimpleNamespace(submit=lambda fn: events.append('validation')))
     monkeypatch.setattr(main, '_start_read_model_maintenance', lambda: events.append('read-models'))
     context = main.app_lifespan(None)
     finish(context.__aenter__())
-    assert events == ['recover', 'validation', 'read-models', 'previews-enter', 'oci-enter']
+    assert events == ['recover', 'validation', 'read-models', 'previews-enter']
     assert len(tasks) == 2
     finish(context.__aexit__(None, None, None))
-    assert events[-2:] == ['oci-exit', 'previews-exit']
+    assert events[-1] == 'previews-exit'
     assert all(task.cancelled for task in tasks)
 
 
@@ -113,10 +106,7 @@ def test_imported_service_page_flags_do_not_switch_full_navigation(replica, monk
     monkeypatch.setattr(main, 'SessionLocal', replica.sessions)
     with replica.sessions() as db:
         service = db.get(Service, replica.service_id)
-        auth = SimpleNamespace(user=db.get(User, replica.user_id),
-            session=SimpleNamespace(id='test', csrf_token='csrf'), csrf_token='csrf',
-            effective_assignments=[], accessible_service_ids=lambda permission: set(),
-            has=lambda *args: False)
+        auth = AuthContext(db.get(User, replica.user_id), UserSession(id=1, user_id=replica.user_id, csrf_token='csrf'))
         subject = (SimpleNamespace(id=service.id) if representation == 'namespace'
                    else {'id': service.id} if representation == 'dict' else service)
         context = main.page_context(auth, view={'service': subject})

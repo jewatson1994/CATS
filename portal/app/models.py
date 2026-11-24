@@ -68,6 +68,18 @@ class DependencyWatchlistEntry(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class WatchlistRefreshState(Base):
+    """The latest committed settings job owns publication of historical matches."""
+    __tablename__ = "watchlist_refresh_state"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(32))
+
+
+class PendingWatchlistDeletion(Base):
+    __tablename__ = "pending_watchlist_deletions"
+    entry_id: Mapped[int] = mapped_column(ForeignKey("dependency_watchlist_entries.id"), primary_key=True)
+
+
 class DependencyWatchlistMatch(Base):
     __tablename__ = "dependency_watchlist_matches"
     __table_args__ = (UniqueConstraint("entry_id", "execution_id", "component_purl", "component_name", "component_version", "image", name="uq_watchlist_match_evidence"),)
@@ -106,6 +118,13 @@ class Group(Base):
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     services: Mapped[list[Service]] = relationship(secondary="service_groups", back_populates="groups")
+
+
+class TopicIntakeGroup(Base):
+    """The internally created group that owns unclaimed Discovery services."""
+    __tablename__ = "topic_intake_group"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"), unique=True)
 
 
 class ServiceGroup(Base):

@@ -109,8 +109,17 @@ export function Shell({data, children}: {data: PageData; children: ReactNode}) {
     node?.addEventListener('toggle', exclusive, true);
     return () => {document.removeEventListener('click', close); document.removeEventListener('keydown', close); node?.removeEventListener('toggle', exclusive, true);};
   }, []);
-  const operationNav = moreNav.map(section => section.label === 'Operations' && (can(data, 'replica.admin') || can(data, 'replica.sync'))
-    ? {...section, items: [...section.items, ['/admin/replica', 'OCI monitoring', (path: string) => path === '/admin/replica', 'package', 'Signed release sources, imports and synchronization'] as NavItem]} : section);
+  const operationNav = moreNav.map(section => {
+    if (section.label === 'Inventory' && !replica && data.may_view_unclaimed) {
+      const unclaimed: NavItem = ['/unclaimed-services', 'Unclaimed Services', path => path === '/unclaimed-services', 'inbox', 'Claim discovered projects for a service group'];
+      return {...section, items: [unclaimed, ...section.items]};
+    }
+    if (section.label === 'Operations' && (can(data, 'replica.admin') || can(data, 'replica.sync'))) {
+      const monitoring: NavItem = ['/admin/replica', 'OCI monitoring', path => path === '/admin/replica', 'package', 'Signed release sources, imports and synchronization'];
+      return {...section, items: [...section.items, monitoring]};
+    }
+    return section;
+  });
   const path = window.location.pathname;
   const icon = ['blue', 'red', 'gray', 'light'].includes(theme) ? `/static/cats-icon-${theme}.png` : '/static/cats-icon.png';
   const version = data.cats_deployed_version;

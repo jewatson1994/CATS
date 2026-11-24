@@ -8,9 +8,10 @@ on:
         default: false
 
 jobs:
-  image:
+  checks:
+    name: Verify runtime and portal
     runs-on: ubuntu-latest
-    timeout-minutes: 100
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,8 +23,6 @@ jobs:
       - uses: azure/setup-helm@v4
         with:
           version: v3.17.3
-      - name: Set release image name
-        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/cats-tool" >> "$GITHUB_ENV"
       - name: Verify release versions and application tests
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -42,6 +41,28 @@ jobs:
             tests/test_runtime_discovery_collector.py tests/test_runtime_applications.py tests/test_runtime_candidates.py \
             tests/test_runtime_assessment_catalog.py tests/test_runtime_resolution_diagnostics.py tests/test_runtime_release_review.py \
             tests/test_runtime_production_components.py
+
+  image:
+    name: Build and verify release images
+    needs: checks
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && inputs.publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - name: Install release verification dependencies
+        run: python -m pip install -r portal/requirements-dev.txt
+      - name: Set release image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/cats-tool" >> "$GITHUB_ENV"
       - uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64

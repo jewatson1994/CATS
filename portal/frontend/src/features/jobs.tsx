@@ -1,5 +1,6 @@
 import {useEffect, useMemo, useState} from 'react';
 import {requestJson, type PageData} from '../api';
+import {visibleTimeout} from '../hooks/visibleTimer';
 import {DataGrid, type GridColumn} from '../components/DataGrid';
 import {Callout, EmptyState, KeyValueGrid, PageHeader, StatusBadge} from '../components/ui';
 import {ErrorDetails} from '../components/ErrorDetails';
@@ -13,7 +14,7 @@ interface Job {
   diagnostic?: Diagnostic; attempts?: number; max_attempts?: number; worker_id?: string; heartbeat_at?: string;
 }
 interface Snapshot {jobs: Job[]; counts: Record<string, number>; limit: number}
-const labels: Record<string, string> = {export: 'Export', scan: 'Scan', 'remediation_plan': 'Remediation plan',
+const labels: Record<string, string> = {export: 'Export', scan: 'Scan', watchlist_refresh: 'Dependency watchlist refresh', 'remediation_plan': 'Remediation plan',
   'remediation_execute': 'Remediation', 'remediation_validate': 'Validation', 'remediation_deliver': 'Delivery'};
 /** A result link worth showing: not one that only reopens this same job on the Jobs page (exports point there). */
 function resultLink(job: Job): string | undefined {
@@ -37,7 +38,8 @@ export function Page({data}: {data: PageData}) {
   const selectedId = new URLSearchParams(window.location.search).get('job');
   useEffect(() => {
     const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
+    let cancelTimer = () => {};
+    if (busy) return;
     async function refresh() {
       try {
         const value = await requestJson<Snapshot>('/api/v1/jobs', {signal: controller.signal});
@@ -50,11 +52,12 @@ export function Page({data}: {data: PageData}) {
       } catch (failure) {
         if (!controller.signal.aborted) {setSelected(undefined); setError(failure instanceof Error ? failure.message : 'Unable to load jobs.');}
       } finally {
-        if (!controller.signal.aborted) timer = setTimeout(refresh, 5000);
+        if (!controller.signal.aborted) cancelTimer = visibleTimeout(refresh, 5000);
       }
     }
-    void refresh();
-    return () => {controller.abort(); clearTimeout(timer);};
+    if (document.visibilityState === 'hidden') cancelTimer = visibleTimeout(refresh, 0);
+    else void refresh();
+    return () => {controller.abort(); cancelTimer();};
   }, [selectedId, busy]);
   async function act(job: Job, action: string) {
     setBusy(job.id);
@@ -87,7 +90,7 @@ export function Page({data}: {data: PageData}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [busy, data.csrf_token, data.may_view_diagnostics]);
   const counts = Object.entries(snapshot?.counts || {});
-  return <><PageHeader eyebrow="Operations" title="Jobs" description="Scans, remediation, exports, and validator provisioning. Updates every five seconds."/>
+  return <><PageHeader eyebrow="Operations" title="Jobs" description="Scans, remediation, exports, watchlist refreshes, and validator provisioning. Updates every five seconds while this tab is visible."/>
     {error && <Callout tone="danger" title="Jobs could not be refreshed">{error}</Callout>}
     {snapshot && <p className="status-summary" aria-label="Job counts">{counts.length ? counts.map(([state, count]) =>
       <StatusBadge key={state} value={state} label={`${state}: ${count}`} size="sm"/>) : <span className="muted">No jobs recorded.</span>}</p>}

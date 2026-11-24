@@ -12,6 +12,8 @@ validator VM; image patching remains in the existing patch-worker.
 | portal | Authorizes and persists requests; serves status and authorized downloads. No Docker socket. |
 | remediation-worker | Plans, expensive previews, source resolution, candidate orchestration, validation coordination and delivery. Calls patch-worker for image patching. |
 | export-worker | Spreadsheet, diagram, evidence and ZIP generation. Uses existing export builders; does not assemble remediation candidates a second time. |
+| settings-worker | Rebuilds dependency watchlist matches after an administrator updates the list on a full deployment. |
+| polling-worker | Synchronizes configured signed OCI sources in full and replica deployments. On full deployments a separate slot checks GitLab topic sources, stages encrypted snapshots for Discovery and admits eligible image scans. [GitLab topic setup](discovery-workflow.md#poll-projects-by-gitlab-topic) |
 | security-data-worker | Checks KEV, EPSS, Grype and Trivy once per UTC day. A failed update leaves the installed data available. |
 | provisioning-worker | Privileged SSH/Docker provisioning with the existing managed-validator operation and attempt records. Has the HQ Docker socket; exposes no HTTP port. |
 | scan-worker / portal-control | Dispatches service schedules, runs image scans within the configured worker limits and ingests the results. |
@@ -209,9 +211,9 @@ mandatory staged-release setting unless deliberately retaining that path.
 ```sh
 # Select the newly built/imported image in the existing .env first.
 docker compose --project-directory . --env-file .env -f templates/compose.local.yaml config --quiet
-docker compose --project-directory . --env-file .env -f templates/compose.local.yaml up -d --force-recreate --wait portal portal-control oci-proxy discovery-worker scan-worker patch-worker remediation-worker risk-worker security-data-worker export-worker provisioning-worker
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml up -d --force-recreate --wait portal portal-control oci-proxy discovery-worker scan-worker patch-worker remediation-worker risk-worker security-data-worker settings-worker polling-worker export-worker provisioning-worker
 docker compose --project-directory . --env-file .env -f templates/compose.local.yaml ps
-docker compose --project-directory . --env-file .env -f templates/compose.local.yaml logs --tail=100 discovery-worker remediation-worker security-data-worker export-worker provisioning-worker
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml logs --tail=100 discovery-worker remediation-worker security-data-worker settings-worker polling-worker export-worker provisioning-worker
 ```
 
 Discovery uses the same `CATS_IMAGE`. Its image must contain any newly enabled
@@ -229,8 +231,22 @@ volume before replacing that container.
 | --- | --- | --- | --- | --- | --- |
 | remediation-worker | `CATS_REMEDIATION_WORKERS` (default 1) | 1 | 2 GiB | 256 | 2 main + 2 background at one worker; otherwise `2*workers+2` background; no overflow |
 | export-worker | 1 shared export slot | 1 | 1 GiB | 128 | 2 main + 2 background; no overflow |
+| settings-worker | 1 watchlist job | 1 | 1 GiB | 128 | 2 main + 2 background, no overflow |
+| polling-worker | 1 OCI sync plus 1 GitLab poll or intake on full deployments. Replicas run OCI only. | 1 | 4 GiB | 128 | 2 main + 4 background on full deployments, 2 + 2 on replicas, no overflow |
 | security-data-worker | 1 source update | 1 | 2 GiB | 128 | 2 main + 2 background, no overflow |
 | provisioning-worker | 1 per process; per-validator exclusion | 1 | 2 GiB | 256 | 2 main + 2 background; no overflow |
+
+The web portal has 2048 CPU shares. The settings and polling workers each have
+256 shares, so Linux gives interactive work more CPU time during contention.
+Their CPU and memory ceilings can be set with `CATS_SETTINGS_CPUS`,
+`CATS_SETTINGS_MEMORY`, `CATS_POLLING_CPUS`, and `CATS_POLLING_MEMORY`.
+The polling worker holds temporary registry credentials in a 64 MiB tmpfs.
+It verifies signed content on its own disk-backed Docker volume. Allow space
+for the largest signed evidence archive plus its signature. Each verification
+removes its scratch directory, and restarting the worker clears interrupted
+verification directories before it claims another job.
+Deploy the worker containers alongside the updated portal. Work queued while
+a worker is stopped is available for it to claim when it restarts.
 
 Compose exposes `CATS_REMEDIATION_CPUS`/`CATS_REMEDIATION_MEMORY`,
 `CATS_EXPORT_CPUS`/`CATS_EXPORT_MEMORY` and
@@ -333,3 +349,18 @@ not production benchmarks or full export timings. The remediation worker then
 generated the fixture's complete 95-chart, 1,700-finding plan. Linux file-size
 enforcement and a full multi-worker Ubuntu deployment remain deployment checks;
 Windows unit tests do not establish those operating-system guarantees.
+
+
+### Local SQLite deployments
+
+Compose uses PostgreSQL. If you run the portal and workers directly against
+a SQLite file on the same host, set `CATS_SQLITE_WAL=true` in the portal
+environment and restart the portal to enable write-ahead logging. With WAL,
+dashboard reads can continue while a worker commits watchlist matches. Leave
+the option unset to preserve the database's current journal mode. Enable it on
+a local filesystem that supports SQLite shared memory. The setting persists
+in the database after you remove the environment variable.
+
+For a live backup, use the SQLite backup API. For a file copy, shut down
+the portal and workers cleanly and close all database connections first so
+SQLite checkpoints committed WAL data.

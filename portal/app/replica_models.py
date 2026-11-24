@@ -1,7 +1,7 @@
 """Local projections of existing approved releases, never a second approval system."""
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, select
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, select
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -9,6 +9,14 @@ from .database import Base
 
 def now():
     return datetime.now(timezone.utc)
+
+
+def reserve_sqlite_writer(db):
+    """SQLite ignores FOR UPDATE. Reserve the writer before checking source state."""
+    if db.get_bind().dialect.name == 'sqlite':
+        connection = db.connection()
+        if not connection.connection.driver_connection.in_transaction:
+            connection.exec_driver_sql('BEGIN IMMEDIATE')
 
 
 class ReleasePublicationSequence(Base):
@@ -110,6 +118,9 @@ class ReplicaRelease(Base):
     source_reference: Mapped[str] = mapped_column(Text)
 
 
+_source_reference_index = Index('ix_replica_releases_source_reference', ReplicaRelease.source_reference)
+
+
 class ReplicaEvent(Base):
     __tablename__ = 'replica_events'
     __table_args__ = (UniqueConstraint('publisher', 'source_service_id', 'sequence'),)
@@ -171,3 +182,4 @@ def upgrade_connection(connection):
               ReplicaRecordMap.__table__, ReplicaEvidenceRecord.__table__, ReplicaFindingDecision.__table__,
               ReplicaObservationDecision.__table__]
     Base.metadata.create_all(connection, tables=tables, checkfirst=True)
+    _source_reference_index.create(connection, checkfirst=True)

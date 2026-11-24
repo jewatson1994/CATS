@@ -36,7 +36,7 @@ def _retain(data):
     if not isinstance(data, bytes) or not data:
         raise ReplicaImportError('Complete evidence archive is required')
     from .cyber_approvals import root
-    storage = Path(os.getenv('CATS_REPLICA_STORAGE', str(root() / 'replica'))).resolve()
+    storage = Path(os.getenv('CATS_REPLICA_STORAGE') or root() / 'replica').resolve()
     storage.mkdir(parents=True, exist_ok=True)
     checksum = hashlib.sha256(data).hexdigest()
     target = storage / (checksum + '.zip')
@@ -179,13 +179,8 @@ def _projection(db, service, state, importer_id):
 def reconcile(db, source, verified, *, now=None):
     """Called only with portable_release.fetch_release output. Caller owns commit."""
     now = now or datetime.now(timezone.utc)
-    # SQLite ignores FOR UPDATE. Acquire its writer reservation before reading
-    # source/trust state so concurrent arrivals cannot regress the retained chain.
-    if db.get_bind().dialect.name == 'sqlite':
-        connection = db.connection()
-        if not connection.connection.driver_connection.in_transaction:
-            connection.exec_driver_sql('BEGIN IMMEDIATE')
-    from .replica_models import ReplicaSource
+    from .replica_models import ReplicaSource, reserve_sqlite_writer
+    reserve_sqlite_writer(db)
     source = db.scalar(select(ReplicaSource).where(ReplicaSource.id == source.id)
                        .with_for_update().execution_options(populate_existing=True))
     if source is None:
