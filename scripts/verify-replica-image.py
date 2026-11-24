@@ -34,8 +34,15 @@ def isolated_config(config: dict, *, image: str, project: str) -> dict:
     """Retain production startup commands and storage, isolate host resources."""
     result = copy.deepcopy(config)
     services = result["services"]
-    if set(services) != {"db", *APPLICATIONS}:
-        raise ValueError("Replica Compose must contain only db, portal and oci-proxy")
+    if set(services) != {"db", "audit-forward-worker", *APPLICATIONS}:
+        raise ValueError("Replica Compose must contain db, portal, oci-proxy and audit-forward-worker")
+    forwarder = services["audit-forward-worker"]
+    if (
+        forwarder.get("image") != image or forwarder.get("entrypoint") != []
+        or forwarder.get("command") != ["python", "-B", "-u", "-m", "app.audit_forward_worker"]
+        or forwarder.get("environment", {}).get("CATS_MODE") != "replica"
+    ):
+        raise ValueError("The replica audit-forward-worker must run the shared image's forwarding command")
     for name, (application, port) in APPLICATIONS.items():
         service = services[name]
         expected = ["uvicorn", application, "--host", "0.0.0.0", "--port", str(port), "--no-proxy-headers"]

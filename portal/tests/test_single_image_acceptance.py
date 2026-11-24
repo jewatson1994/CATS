@@ -52,6 +52,11 @@ def test_explicit_replica_override_is_inspected_but_never_built(tmp_path):
 def resolved_compose():
     services = {"db": {"image": "postgres:16", "volumes": [
         {"type": "volume", "source": "replica_db", "target": "/var/lib/postgresql/data"}]}}
+    services["audit-forward-worker"] = {
+        "image": "cats:test", "entrypoint": [],
+        "command": ["python", "-B", "-u", "-m", "app.audit_forward_worker"],
+        "environment": {"CATS_MODE": "replica"},
+    }
     for name, (application, port) in smoke.APPLICATIONS.items():
         services[name] = {
             "image": "cats:test", "entrypoint": [],

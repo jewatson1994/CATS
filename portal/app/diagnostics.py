@@ -20,9 +20,7 @@ _SAFE_KEYS = {"token_configured", "credentials_configured", "signature_status", 
 _PUBLIC_CONTEXT = {"stage", "failed_stage", "last_successful_stage", "worker_id", "job_id", "task_id", "attempts", "max_attempts", "exit_code", "tool", "timeout_seconds", "failure_category", "reason_category"}
 
 
-def _text(value):
-    # Redact before truncation: a truncation boundary must not reveal part of a secret.
-    value = str(value)[:32768]
+def _redact_text(value):
     value = re.sub(r"-----BEGIN [^-]*PRIVATE KEY-----.*?(?:-----END [^-]*PRIVATE KEY-----|$)", "[REDACTED PRIVATE KEY]", value, flags=re.S)
     value = re.sub(r"(?i)([a-z][a-z0-9+.-]*://)[^\s/@]+(?::[^\s/@]*)?@", r"\1[REDACTED]@", value)
     value = re.sub(r"(?i)\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+", "[REDACTED AUTHORIZATION]", value)
@@ -33,7 +31,27 @@ def _text(value):
     value = re.sub(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*)?", "[REDACTED TOKEN]", value)
     # Signed URLs and arbitrary query parameters are not useful diagnostic evidence.
     value = re.sub(r"((?:https?|oci)://[^\s?#]+)\?[^\s#]*", r"\1?[REDACTED QUERY]", value)
+    return value
+
+
+def _text(value):
+    value = _redact_text(str(value)[:32768])
     return value[:4096] + (" … [truncated]" if len(value) > 4096 else "")
+
+
+def redact_audit_value(value):
+    """Protect credentials on egress without truncating decisions or evidence lists."""
+    if isinstance(value, dict):
+        result = {}
+        for key, item in value.items():
+            safe = key in _SAFE_KEYS or key in {"authorization_source", "authorization_status"}
+            result[_redact_text(key)] = (
+                "[REDACTED]" if _SECRET.search(key) and not safe else redact_audit_value(item)
+            )
+        return result
+    if isinstance(value, list):
+        return [redact_audit_value(item) for item in value]
+    return _redact_text(value) if isinstance(value, str) else value
 
 
 def sanitize(value, *, _depth=0, _budget=None):

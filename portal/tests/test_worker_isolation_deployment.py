@@ -9,6 +9,29 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKERS = ("discovery-worker", "scan-worker", "patch-worker", "remediation-worker")
 
 
+@pytest.mark.parametrize("template", [
+    "compose.local.yaml", "compose.main.yaml", "compose.replica.yaml", "compose.replica.external-ingress.yaml",
+])
+def test_audit_forwarder_starts_after_portal_and_only_receives_forwarding_credentials(template):
+    services = yaml.safe_load((ROOT / "templates" / template).read_text(encoding="utf-8"))["services"]
+    forwarder = services["audit-forward-worker"]
+    assert forwarder["image"] == services["portal"]["image"]
+    assert forwarder["entrypoint"] == []
+    assert forwarder["command"] == ["python", "-B", "-u", "-m", "app.audit_forward_worker"]
+    assert forwarder["depends_on"] == {"portal": {"condition": "service_healthy"}}
+    assert forwarder["restart"] == "unless-stopped"
+    expected_env = {"DATABASE_URL", "PGPASSWORD", "CATS_CONFIG_ENCRYPTION_KEY"}
+    if "replica" in template:
+        expected_env.add("CATS_MODE")
+        assert forwarder["environment"]["CATS_MODE"] == "replica"
+    assert set(forwarder["environment"]) == expected_env
+    assert forwarder["environment"]["DATABASE_URL"] == services["portal"]["environment"]["DATABASE_URL"]
+    assert forwarder["user"] == "65534:65534"
+    assert forwarder["cap_drop"] == ["ALL"]
+    assert forwarder["read_only"] is True
+    assert "ports" not in forwarder and "volumes" not in forwarder
+
+
 @pytest.mark.parametrize("path", ["templates/compose.local.yaml", "templates/compose.main.yaml"])
 def test_every_action_worker_has_setup_policy_and_runtime_probe(path):
     services = yaml.safe_load((ROOT / path).read_text(encoding="utf-8"))["services"]

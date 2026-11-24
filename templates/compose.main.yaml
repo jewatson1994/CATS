@@ -866,6 +866,23 @@ services:
       retries: 20
     restart: unless-stopped
 
+  audit-forward-worker:
+    image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
+    entrypoint: []
+    command: ["python", "-B", "-u", "-m", "app.audit_forward_worker"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cats}@db:5432/${POSTGRES_DB:-cats}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      CATS_CONFIG_ENCRYPTION_KEY: ${CATS_CONFIG_ENCRYPTION_KEY:?Set CATS_CONFIG_ENCRYPTION_KEY}
+    depends_on:
+      portal:
+        condition: service_healthy
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
   intelligence-init:
     image: ${CATS_IMAGE:-cats:local}
     entrypoint: []
