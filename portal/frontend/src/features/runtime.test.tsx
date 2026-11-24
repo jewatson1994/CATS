@@ -170,7 +170,7 @@ it.each([undefined, deploymentImage])('uses the deployed image or release defaul
   const panel = within(await screen.findByRole('region', {name:'Link an agent'}));
   expect(panel.getByLabelText('Linking key')).toHaveValue('key-plaintext-example');
   const example = panel.getByText(/helm upgrade --install/);
-  expect(example).toHaveTextContent('cats-runtime-0.2.1.tgz');
+  expect(example).toHaveTextContent('cats-runtime-0.2.2.tgz');
   if (image) expect(example).toHaveTextContent(`--set-string image.reference='${image}'`);
   else expect(example).not.toHaveTextContent('image.reference');
   expect(example).toHaveTextContent('--set-string catsUrl="$CATS_URL"');

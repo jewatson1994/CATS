@@ -27,6 +27,18 @@ name: cats
 #   - The rebuild utility sets CATS_IMAGE automatically before
 #     recreating the portal and patch-worker.
 
+# The Docker daemon writes service output to this deployment's local Unix socket.
+x-cats-component-logging: &cats_component_logging
+  driver: fluentd
+  options:
+    fluentd-address: "unix://${CATS_COMPONENT_LOG_SOCKET_DIR:-/run/cats-logs-${COMPOSE_PROJECT_NAME:-cats}}/ingest.sock"
+    fluentd-async: "true"
+    fluentd-request-ack: "true"
+    fluentd-sub-second-precision: "true"
+    fluentd-buffer-limit: "8192"
+    tag: cats.compose
+    labels: "com.docker.compose.service,com.docker.compose.project"
+
 services:
 
   # =========================================================
@@ -34,6 +46,7 @@ services:
   # =========================================================
 
   portal:
+    logging: *cats_component_logging
     # Prefer interactive requests when the host is CPU-bound.
     cpu_shares: 2048
     image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
@@ -456,6 +469,7 @@ services:
 
   # Dedicated internal listener: worker protocol never uses the published Portal port.
   portal-control:
+    logging: *cats_component_logging
     image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
     entrypoint: []
     command: ["uvicorn", "app.scan_control:app", "--host", "0.0.0.0", "--port", "8001"]
@@ -477,6 +491,7 @@ services:
 
   # Shared HTTPS entry point; configuration below is embedded in this file.
   nginx:
+    logging: *cats_component_logging
     # Pinned official stable-alpine image, including stream + ssl_preread support.
     image: ${CATS_NGINX_IMAGE:-nginx:stable-alpine@sha256:0e52bd054126cdc040b1276c0af347aeb02a41b9cfe305d6094767ac30e97949}
     # Shell and Nginx variables use $$ so Compose leaves them for the container.
@@ -571,6 +586,7 @@ services:
 
   # Read-only OCI distribution facade; starts with the main stack.
   oci-proxy:
+    logging: *cats_component_logging
     image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
     entrypoint: []
     command: ["uvicorn", "app.oci_proxy:app", "--host", "0.0.0.0", "--port", "5000", "--no-proxy-headers", "--ssl-certfile", "/app/oci-certs/tls.crt", "--ssl-keyfile", "/app/oci-certs/tls.key"]
@@ -627,6 +643,7 @@ services:
   # =========================================================
 
   discovery-worker:
+    logging: *cats_component_logging
     init: true
     image: ${CATS_IMAGE:-cats:local}
     entrypoint: []
@@ -683,6 +700,7 @@ services:
 
   # Dedicated daemonless scanner: no database credentials or Docker socket.
   scan-worker:
+    logging: *cats_component_logging
     init: true
     image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
     entrypoint: []
@@ -766,6 +784,7 @@ services:
     restart: unless-stopped
 
   patch-worker:
+    logging: *cats_component_logging
     init: true
     image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
     entrypoint: []
@@ -818,6 +837,7 @@ services:
     restart: unless-stopped
 
   remediation-worker:
+    logging: *cats_component_logging
     init: true
     <<: &background_worker
       image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
@@ -859,6 +879,7 @@ services:
 
   # Intelligence has independent storage and an independent import process.
   intelligence-db:
+    logging: *cats_component_logging
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: ${INTELLIGENCE_POSTGRES_DB:-cats_intelligence}
@@ -873,7 +894,30 @@ services:
       retries: 20
     restart: unless-stopped
 
+  audit-forward-worker:
+    logging: *cats_component_logging
+    image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
+    entrypoint: []
+    command: ["python", "-B", "-u", "-m", "app.audit_forward_worker"]
+    environment:
+      PGAPPNAME: cats-log-forwarder
+      CATS_OPERATIONAL_LOG_RETENTION_DAYS: ${CATS_OPERATIONAL_LOG_RETENTION_DAYS:-7}
+      CATS_OPERATIONAL_LOG_MAX_ROWS: ${CATS_OPERATIONAL_LOG_MAX_ROWS:-50000}
+      CATS_OPERATIONAL_QUEUE_MAX_ROWS: ${CATS_OPERATIONAL_QUEUE_MAX_ROWS:-50000}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cats}@db:5432/${POSTGRES_DB:-cats}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      CATS_CONFIG_ENCRYPTION_KEY: ${CATS_CONFIG_ENCRYPTION_KEY:?Set CATS_CONFIG_ENCRYPTION_KEY}
+    depends_on:
+      portal:
+        condition: service_healthy
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
   intelligence-init:
+    logging: *cats_component_logging
     image: ${CATS_IMAGE:-cats:local}
     entrypoint: []
     command: ["python", "-m", "app.intelligence_importer", "--schema-only"]
@@ -884,6 +928,7 @@ services:
     restart: on-failure:3
 
   intelligence-importer:
+    logging: *cats_component_logging
     image: ${CATS_IMAGE:-cats:local}
     entrypoint: []
     command: ["python", "-m", "app.intelligence_importer"]
@@ -896,6 +941,7 @@ services:
     restart: on-failure:3
 
   settings-worker:
+    logging: *cats_component_logging
     <<: *background_worker
     command: ["python", "-m", "app.settings_worker"]
     environment: &job_worker_environment
@@ -921,6 +967,7 @@ services:
     pids_limit: 128
 
   polling-worker:
+    logging: *cats_component_logging
     <<: *background_worker
     command: ["python", "-m", "app.polling_worker"]
     group_add: ["10003"]
@@ -967,6 +1014,7 @@ services:
     pids_limit: 128
 
   security-data-worker:
+    logging: *cats_component_logging
     <<: *background_worker
     command: ["python", "-m", "app.daily_security_data"]
     environment:
@@ -987,6 +1035,7 @@ services:
     pids_limit: 128
 
   risk-worker:
+    logging: *cats_component_logging
     <<: *background_worker
     command: ["python", "-m", "app.risk_worker"]
     environment: *background_environment
@@ -1000,6 +1049,7 @@ services:
   # =========================================================
 
   export-worker:
+    logging: *cats_component_logging
     <<: *background_worker
     command: ["python", "-m", "app.export_worker"]
     environment:
@@ -1010,6 +1060,7 @@ services:
     pids_limit: 128
 
   provisioning-worker:
+    logging: *cats_component_logging
     <<: *background_worker
     command: ["python", "-m", "app.provisioning_worker"]
     environment:
@@ -1038,7 +1089,9 @@ services:
   # =========================================================
 
   db:
+    logging: *cats_component_logging
     image: postgres:16-alpine
+    command: ["postgres", "-c", "log_line_prefix=%m [%p] %a %u@%d "]
 
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-cats}
@@ -1062,6 +1115,7 @@ services:
     restart: unless-stopped
 
   db-backup:
+    logging: *cats_component_logging
     image: ${CATS_IMAGE:-cats:local}
     entrypoint: ["python3", "/opt/backup/backup.py"]
     command: ["schedule"]
@@ -1093,7 +1147,31 @@ services:
 # Persistent Volumes
 # ===========================================================
 
+  component-log-collector:
+    image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
+    entrypoint: []
+    command: ["python", "-B", "-u", "-m", "app.compose_log_collector"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cats}@db:5432/${POSTGRES_DB:-cats}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      PGAPPNAME: cats-log-collector
+      CATS_COMPONENT_LOG_SPOOL_MIB: ${CATS_COMPONENT_LOG_SPOOL_MIB:-512}
+    volumes:
+      - type: bind
+        source: "${CATS_COMPONENT_LOG_SOCKET_DIR:-/run/cats-logs-${COMPOSE_PROJECT_NAME:-cats}}"
+        target: /run/cats-log-input
+      - component_log_spool:/var/lib/cats-component-logs
+    # The receiver cannot send its own stdout back through its input socket.
+    logging:
+      driver: local
+    user: "0:0"
+    cap_drop: [ALL]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
 volumes:
+  component_log_spool:
 
   oci_proxy_cache:
 

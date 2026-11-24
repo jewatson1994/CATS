@@ -19,6 +19,7 @@ Usage:
   cats push assessment --input PORTAL_RESULT_JSON
   cats submit (--reference REGISTRY_REFERENCE | --file ARTIFACT) --key SUBMISSION_KEY [--version SERVICE_VERSION]
   cats push patch --input PATCH_RESULT_JSON
+  cats push logs --input SCANNER_PHASE_JOURNAL_DIRECTORY
 EOF
 }
 
@@ -159,6 +160,14 @@ push_result() {
 
 command="${1:-}"
 shift || true
+if [[ "$command" =~ ^(prepare|evaluate|patch)$ ]] && [[ -n "${CATS_COMPONENT_LOG_SPOOL:-}" ]]; then
+  phase_journal="$CATS_COMPONENT_LOG_SPOOL"
+  [[ "$phase_journal" = /* ]] || phase_journal="$PWD/$phase_journal"
+  unset CATS_COMPONENT_LOG_TOKEN
+  if phase_run="$(python3 "$SCRIPT_DIR/phase_logs.py" start "$command" "$phase_journal")"; then
+    trap 'phase_status=$?; python3 "$SCRIPT_DIR/phase_logs.py" finish "$command" "$phase_journal" "$phase_run" "$phase_status" || true; exit "$phase_status"' EXIT
+  fi
+fi
 case "$command" in
   version) [ "$#" -eq 0 ] || { usage; exit 2; }; version ;;
   prepare) prepare "$@" ;;
@@ -168,7 +177,11 @@ case "$command" in
   push)
     kind="${1:-}"; input_flag="${2:-}"; input="${3:-}"
     [ "$input_flag" = "--input" ] && [ -n "$input" ] && [ "$#" -eq 3 ] || { usage; exit 2; }
-    case "$kind" in assessment|patch) push_result "$kind" "$input" ;; *) usage; exit 2 ;; esac
+    case "$kind" in
+      assessment|patch) push_result "$kind" "$input" ;;
+      logs) exec python3 "$SCRIPT_DIR/phase_logs.py" upload "$input" ;;
+      *) usage; exit 2 ;;
+    esac
     ;;
   *) usage; exit 2 ;;
 esac

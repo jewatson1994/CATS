@@ -1,0 +1,79 @@
+name: Verify central audit forwarding
+
+on:
+  push:
+    branches: [feature/central-audit-forwarding]
+  pull_request:
+    paths:
+      - "portal/app/audit_forward*.py"
+      - "portal/tests/test_audit_forward*.py"
+      - "portal/app/component_log*.py"
+      - "portal/app/compose_log_collector.py"
+      - "portal/app/replica_audit_reporter.py"
+      - "portal/app/validator_log*.py"
+      - "portal/tests/test_component*.py"
+      - "portal/tests/test_remote_log_reporting.py"
+      - "portal/tests/test_replica_audit_reporter.py"
+      - "runtime-agent/cats_runtime/local_logs.py"
+      - "scanning-main/scripts/phase_logs.py"
+      - "templates/compose*.yaml"
+      - "portal/tests/test_local_login_audit.py"
+      - "portal/frontend/src/features/log_forwarding*"
+      - "portal/frontend/src/features/component_log_history*"
+      - ".github/workflows/audit-forwarding.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  forwarding:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: cats_forwarding_test
+          POSTGRES_PASSWORD: cats_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r portal/requirements-dev.txt
+      - name: Exercise audit capture, recovery and live receiver protocols
+        working-directory: portal
+        env:
+          CATS_TEST_POSTGRES_URL: postgresql+psycopg://postgres:cats_test@localhost:5432/cats_forwarding_test
+          CATS_TEST_RECEIVERS: "1"
+        run: |
+          python -m pytest -q tests/test_audit_forward*.py tests/test_local_login_audit.py \
+            tests/test_component_log_ingest.py tests/test_remote_log_reporting.py \
+            tests/test_component_forwarding_e2e.py tests/test_replica_audit_reporter.py \
+            tests/test_replica_image_deployment.py tests/test_worker_isolation_deployment.py
+      - name: Verify the standalone scanner phase journal
+        run: python -m pytest -q scanning-main/tests/test_phase_logs.py scanning-main/tests/test_cats_cli_contract.py
+
+  settings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    defaults:
+      run:
+        working-directory: portal/frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: npm install --global pnpm@11.19.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test log_forwarding component_log_history
+      - run: pnpm build

@@ -23,9 +23,17 @@ import urllib.request
 import uuid
 
 from . import __version__, kube_workloads
+from .local_logs import RuntimeEvents
 from .report_pages import MAX_REPORT_BYTES, MAX_WORKLOADS, send_report
 
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+_runtime_events = None
+
+
+def status(code, *, warning=False, **fields):
+    print("cats-runtime: " + code, file=sys.stderr if warning else sys.stdout, flush=True)
+    if _runtime_events:
+        _runtime_events.record(code, warning, **fields)
 MAX_OFFLINE_REPORTS = 8
 MAX_OUTBOX_BYTES = 64 * 1024 * 1024
 COLLECTION_BUDGET_SECONDS = 120
@@ -405,7 +413,7 @@ class KubernetesCollector:
                                            window, token) for kind, version in self.versions.items()]
                     changed = any([watch.result() for watch in watches])
                 except AgentError as exc:
-                    print("cats-runtime: " + exc.code, file=sys.stderr, flush=True)
+                    status(exc.code, warning=True)
                     time.sleep(max(0, deadline - time.monotonic()))
                     return
                 if changed:
@@ -722,7 +730,7 @@ def capture_offline(store, state, collector):
         # The pending report may already have reached CATS. Only coalesce
         # unsent entries; keep their earliest transitions and the latest state.
         offline.pop()
-        print("cats-runtime: offline_buffer_coalesced", file=sys.stderr, flush=True)
+        status("offline_buffer_coalesced", warning=True)
     latest["sequence"] = pending["sequence"] + len(offline) + 1
     offline.append(latest)
     store.save({**state, "offline": offline})
@@ -741,11 +749,17 @@ def send_once(store, state, client, collector):
             or ack["sequence"] != state["next_sequence"]):
         raise AgentError("report_ack_invalid")
     offline = state.get("offline", [])
+    accepted = state["pending"]
     updated = {**state, "next_sequence": state["next_sequence"] + 1,
                "pending": offline[0] if offline else None, "offline": offline[1:],
                "last_acked_observed_at": state["pending"]["observed_at"]}
     store.save(updated)
     state.update(updated)
+    status("report_accepted", sequence=accepted["sequence"], workload_count=len(accepted["workloads"]),
+           error_count=len(accepted.get("errors", [])))
+    for code in accepted.get("errors", []):
+        if _runtime_events:
+            _runtime_events.record(code, True, sequence=accepted["sequence"])
 
 
 def parser():
@@ -766,12 +780,14 @@ def parser():
 
 
 def main(argv=None):
+    global _runtime_events
     args = parser().parse_args(argv)
     try:
-        if not args.cats_url:
-            raise AgentError("cats_url_required")
-        client = HTTPSClient(args.cats_url, args.ca_file)
         with StateStore(args.state_dir) as store:
+            _runtime_events = RuntimeEvents(store.directory)
+            if not args.cats_url:
+                raise AgentError("cats_url_required")
+            client = HTTPSClient(args.cats_url, args.ca_file)
             state = store.load()
             collector = (KubernetesCollector(HTTPSClient(args.kubernetes_url, args.kubernetes_ca_file),
                                              args.kubernetes_token_file) if args.source == "kubernetes"
@@ -785,8 +801,9 @@ def main(argv=None):
                         cluster_verified = True
                     linked = bool(state.get("agent_token"))
                     enroll(store, state, client, args.name, args.linking_key_file, args.source)
+                    _runtime_events.start(client, state["agent_token"])
                     if not linked or args.mode == "link":
-                        print("cats-runtime: linked", flush=True)
+                        status("linked")
                     if args.mode == "link":
                         return 0
                     if args.source == "kubernetes" and state.get("pending"):
@@ -795,9 +812,8 @@ def main(argv=None):
                     while state.get("pending"):
                         send_once(store, state, client, collector)
                     failures = 0
-                    print("cats-runtime: report_accepted", flush=True)
                 except AgentError as exc:
-                    print("cats-runtime: " + exc.code, file=sys.stderr, flush=True)
+                    status(exc.code, warning=True)
                     failures += 1
                     if args.once or args.mode == "link" or exc.code in ("kubernetes_cluster_identity_mismatch", "http_400", "http_401", "http_403", "http_413", "http_422",
                             "enrollment_url_mismatch", "enrollment_source_mismatch", "enrollment_state_mismatch",
@@ -815,8 +831,12 @@ def main(argv=None):
     except KeyboardInterrupt:
         return 0
     except AgentError as exc:
-        print("cats-runtime: " + exc.code, file=sys.stderr)
+        status(exc.code, warning=True)
         return 1
     except (OSError, ValueError, TypeError):
-        print("cats-runtime: local_configuration_or_state_failed", file=sys.stderr)
+        status("local_configuration_or_state_failed", warning=True)
         return 1
+    finally:
+        if _runtime_events:
+            _runtime_events.close()
+            _runtime_events = None

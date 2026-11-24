@@ -14,6 +14,7 @@ import copy
 import json
 import os
 from pathlib import Path
+import posixpath
 import secrets
 import subprocess
 import sys
@@ -30,15 +31,34 @@ ENGINE_ENV = {
 APPLICATIONS = {"portal": ("app.main:app", 8000), "oci-proxy": ("app.oci_proxy:app", 5000)}
 
 
-def isolated_config(config: dict, *, image: str, project: str) -> dict:
+def isolated_config(config: dict, *, image: str, project: str, docker_root="/var/lib/docker") -> dict:
     """Retain production startup commands and storage, isolate host resources."""
     result = copy.deepcopy(config)
     services = result["services"]
     commands = {name: ["uvicorn", app, "--host", "0.0.0.0", "--port", str(port), "--no-proxy-headers"]
                 for name, (app, port) in APPLICATIONS.items()}
     commands["polling-worker"] = ["python", "-m", "app.polling_worker"]
-    if set(services) != {"db", *commands}:
-        raise ValueError("Replica Compose must contain only db, portal, polling-worker and oci-proxy")
+    if set(services) != {"db", "replica-audit-reporter", "component-log-collector", *commands}:
+        raise ValueError("Unexpected replica Compose services")
+    forwarder = services["replica-audit-reporter"]
+    if (
+        forwarder.get("image") != image or forwarder.get("entrypoint") != []
+        or forwarder.get("command") != ["python", "-B", "-u", "-m", "app.replica_audit_reporter"]
+        or forwarder.get("environment", {}).get("CATS_MODE") != "replica"
+    ):
+        raise ValueError("The replica must run the shared image's HQ reporter")
+    collector = services["component-log-collector"]
+    if (collector.get("image") != image or collector.get("entrypoint") != []
+            or collector.get("command") != ["python", "-B", "-u", "-m", "app.compose_log_collector"]):
+        raise ValueError("The replica must run the shared image's log collector")
+    # Place the socket in a disposable named volume, so the Docker daemon can
+    # reach it without touching the operator's production socket or host files.
+    result.setdefault("volumes", {})["smoke_log_socket"] = {}
+    source = posixpath.join(docker_root, "volumes", project + "_smoke_log_socket", "_data", "ingest.sock")
+    for volume in collector.get("volumes", []):
+        if volume.get("type") == "bind" and volume.get("target") == "/run/cats-log-input":
+            volume.update(type="volume", source="smoke_log_socket")
+            volume.pop("bind", None)
     for name, expected in commands.items():
         service = services[name]
         if service.get("image") != image:
@@ -51,6 +71,9 @@ def isolated_config(config: dict, *, image: str, project: str) -> dict:
         if "INTELLIGENCE_DATABASE_URL" in env:
             raise ValueError(f"{name} must not connect to an intelligence database")
     for name, service in services.items():
+        logging_config = service.get("logging", {})
+        if logging_config.get("driver") == "fluentd":
+            logging_config["options"]["fluentd-address"] = "unix://" + source
         if service.get("privileged"):
             raise ValueError(f"{name} must not be privileged")
         for volume in service.get("volumes", []):
@@ -165,7 +188,8 @@ def run_smoke(image: str, repo: Path, timeout: int) -> None:
         # the generated smoke deployment or importing real site credentials.
         resolved = docker("compose", "--project-directory", str(repo), "--project-name", project, "--env-file", str(env_file),
                           "--file", str(repo / "templates/compose.replica.external-ingress.yaml"), "config", "--format", "json")
-        config = isolated_config(json.loads(resolved.stdout), image=image, project=project)
+        docker_root = docker("info", "--format", "{{.DockerRootDir}}").stdout.strip()
+        config = isolated_config(json.loads(resolved.stdout), image=image, project=project, docker_root=docker_root)
         config_file = folder / "compose.json"
         descriptor = os.open(config_file, os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as output:

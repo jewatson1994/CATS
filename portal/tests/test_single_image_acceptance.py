@@ -52,6 +52,17 @@ def test_explicit_replica_override_is_inspected_but_never_built(tmp_path):
 def resolved_compose():
     services = {"db": {"image": "postgres:16", "volumes": [
         {"type": "volume", "source": "replica_db", "target": "/var/lib/postgresql/data"}]}}
+    services["replica-audit-reporter"] = {
+        "image": "cats:test", "entrypoint": [],
+        "command": ["python", "-B", "-u", "-m", "app.replica_audit_reporter"],
+        "environment": {"CATS_MODE": "replica"},
+    }
+    services["component-log-collector"] = {
+        "image": "cats:test", "entrypoint": [],
+        "command": ["python", "-B", "-u", "-m", "app.compose_log_collector"],
+        "volumes": [{"type": "bind", "source": "/run/cats-logs-prod", "target": "/run/cats-log-input"}],
+    }
+    services["db"]["logging"] = {"driver": "fluentd", "options": {"fluentd-address": "unix:///production.sock"}}
     for name, (application, port) in smoke.APPLICATIONS.items():
         services[name] = {
             "image": "cats:test", "entrypoint": [],
@@ -81,6 +92,10 @@ def test_smoke_preserves_real_startup_and_isolates_all_resources(resolved_compos
     assert actual["networks"] == {"default": {"name": "test-project_default", "internal": True}}
     assert actual["volumes"]["replica_db"] == {"name": "test-project_replica_db"}
     assert actual["volumes"]["replica_evidence"] == {"name": "test-project_replica_evidence"}
+    assert actual["services"]["db"]["logging"]["options"]["fluentd-address"] == (
+        "unix:///var/lib/docker/volumes/test-project_smoke_log_socket/_data/ingest.sock"
+    )
+    assert actual["services"]["component-log-collector"]["volumes"][0]["source"] == "smoke_log_socket"
 
 
 @pytest.mark.parametrize("field,value", [

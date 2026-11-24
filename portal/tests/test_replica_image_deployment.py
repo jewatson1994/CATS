@@ -49,10 +49,12 @@ def test_shared_image_and_legacy_settings_keep_replica_isolated(tmp_path, compos
     assert result.returncode == 0, result.stderr
     services = json.loads(result.stdout)["services"]
     assert services["portal"]["environment"]["CATS_IMAGE"] == expected
-    expected_services = {"portal", "oci-proxy", "db", "polling-worker"}
+    expected_services = {"portal", "oci-proxy", "db", "polling-worker", "replica-audit-reporter", "component-log-collector"}
     if compose_file == "templates/compose.replica.yaml":
         expected_services.add("nginx")
     assert set(services) == expected_services
+    assert services["replica-audit-reporter"]["image"] == expected
+    assert services["component-log-collector"]["image"] == expected
     worker = services["polling-worker"]
     assert worker["image"] == expected
     assert worker["entrypoint"] == [] and worker["command"] == ["python", "-m", "app.polling_worker"]
@@ -80,3 +82,41 @@ def test_missing_shared_image_fails_before_starting(tmp_path, compose_file):
     result = resolve_compose(tmp_path, compose_file, {})
     assert result.returncode != 0
     assert "Set CATS_IMAGE" in result.stderr
+
+
+@pytest.mark.parametrize("variants", [("main",), ("local",), ("local", "local-nginx"),
+                                      ("replica",), ("replica.external-ingress",)])
+def test_shipped_services_send_component_logs_only_to_their_own_local_socket(variants, tmp_path):
+    if not shutil.which("docker"):
+        pytest.skip("Requires Docker Compose CLI")
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.startswith(("CATS_", "COMPOSE_", "POSTGRES_"))}
+    environment.update(CATS_IMAGE="cats:qualification", CATS_PORTAL_HOSTNAME="portal.test", CATS_OCI_HOSTNAME="oci.test",
+        POSTGRES_PASSWORD="compose-test", CATS_BOOTSTRAP_PASSWORD="compose-test", CATS_CONFIG_ENCRYPTION_KEY="compose-test",
+        CATS_PATCH_WORKER_TOKEN="compose-test", CATS_SCAN_WORKER_TOKEN="compose-test", PIPELINE_API_TOKEN="compose-test",
+        CATS_COMPONENT_LOG_SOCKET_DIR="/run/cats-test-socket", CATS_AUDIT_HQ_TOKEN="dedicated-hq-token")
+    env_file = tmp_path / "compose.env"
+    env_file.write_text("", encoding="utf-8")
+    args = ["docker", "compose", "--env-file", str(env_file), "--project-name", "test-forwarding"]
+    for name in variants:
+        args.extend(["--file", str(ROOT / "templates" / f"compose.{name}.yaml")])
+    result = subprocess.run(args + ["config", "--format", "json", "--no-path-resolution"],
+                            env=environment, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    services = json.loads(result.stdout)["services"]
+    for name, service in services.items():
+        if name == "component-log-collector":
+            assert service["image"] == "cats:qualification"
+            assert service["logging"]["driver"] == "local"
+            assert not service.get("ports")
+            mount = next(m for m in service["volumes"] if m["target"] == "/run/cats-log-input")
+            assert mount["source"].replace("\\", "/").endswith("/run/cats-test-socket")
+        else:
+            assert service["logging"]["driver"] == "fluentd", name
+            options = service["logging"]["options"]
+            assert options["fluentd-address"] == "unix:///run/cats-test-socket/ingest.sock"
+            assert options["fluentd-async"] == options["fluentd-request-ack"] == "true"
+            assert options["tag"] == "cats.compose"
+            assert "com.docker.compose.service" in options["labels"]
+        if name != "replica-audit-reporter":
+            assert "CATS_AUDIT_HQ_TOKEN" not in service.get("environment", {})

@@ -61,6 +61,8 @@ if __name__ == "__main__":
                 http=MutualTLSH11Protocol,
                 **tls_configuration())
     configuration.load()
+    from app.validator_logging import attach_server_logging
+    attach_server_logging()
     configuration.ssl.minimum_version = ssl.TLSVersion.TLSv1_2
     from app import validator_operations
     validator_operations.TLS_RELOAD = configuration.ssl.load_cert_chain

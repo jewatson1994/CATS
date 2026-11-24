@@ -100,10 +100,10 @@ function LinkingInstructions({token, environment, close}: {token: LinkingKey; en
     {environment.kind === 'kubernetes' ? <>
       <h4>Install the Kubernetes agent</h4>
       <p>Save the key in a private file named <code>linking-key</code>. Set <code>CATS_URL</code> to the portal HTTPS address reachable from the cluster, then run this command with the packaged chart.</p>
-      <pre><code>{['helm upgrade --install cats-runtime ./cats-runtime-0.2.1.tgz', '  --namespace cats-runtime --create-namespace',
+      <pre><code>{['helm upgrade --install cats-runtime ./cats-runtime-0.2.2.tgz', '  --namespace cats-runtime --create-namespace',
         '  --set-string catsUrl="$CATS_URL"', ...(quotedImage ? [`  --set-string image.reference=${quotedImage}`] : []),
         '  --set-file linkingKey=./linking-key'].join(' \\\n')}</code></pre>
-      <p>For a published chart, replace the chart file with <code>oci://ghcr.io/jewatson1994/charts/cats-runtime --version 0.2.1</code>.</p>
+      <p>For a published chart, replace the chart file with <code>oci://ghcr.io/jewatson1994/charts/cats-runtime --version 0.2.2</code>.</p>
       {quotedImage && <p>The command uses this portal’s CATS image. If your cluster pulls from a mirror, set <code>image.reference</code> to the mirrored release.</p>}
       <p>To keep the key out of Helm release history, provision a Secret in the release namespace with the field <code>linking-key</code> and replace the last flag with <code>--set-string linkingKeySecret=SECRET_NAME</code>. For private portal certificates, set <code>caSecret</code> to a Secret containing <code>ca.crt</code>.</p>
     </> : <>

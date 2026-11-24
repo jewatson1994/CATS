@@ -587,6 +587,30 @@ def lock_reporting_agent(db, identity, token_hash):
     return db.get(RuntimeAgent, identity, populate_existing=True, options=[defer(RuntimeAgent.workloads)])
 
 
+@router.post('/logs')
+async def runtime_logs(request: Request, db: Session = Depends(get_db)):
+    from .component_log_ingest import record_component_event
+    row, token_hash = authenticate(request, db)
+    identity = inspect(row).identity[0]
+    db.rollback()
+    data = await body(request, {'events'}, limit=262144)
+    entries = data.get('events')
+    if not isinstance(entries, list) or not 1 <= len(entries) <= 100:
+        raise HTTPException(422, 'Expected 1 to 100 runtime events')
+    def ingest():
+        try:
+            agent = lock_reporting_agent(db, identity, token_hash)
+            for entry in entries:
+                if not isinstance(entry, dict) or entry.get('category') not in ('operational', 'diagnostic'):
+                    raise HTTPException(422, 'Invalid runtime event category')
+                record_component_event(db, 'runtime:' + identity, agent.name, entry)
+            db.commit()
+            return {'event_ids': [entry['event_id'] for entry in entries]}
+        finally:
+            db.rollback()
+    return await run_in_threadpool(ingest)
+
+
 def accept_report(db, row, token_hash, data, timestamp, *, max_workloads=MAX_WORKLOADS):
     from .runtime_report_pages import clear_pages, ensure_pending_matches
     observed, errors, workloads = validate_report(data, timestamp, max_workloads=max_workloads)

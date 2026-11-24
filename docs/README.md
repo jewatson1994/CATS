@@ -9,6 +9,7 @@ Start with the [project README](../README.md) for an overview. The guides below 
 - [Nginx ingress](nginx-ingress.md): hostnames, certificates, and migration.
 - [Database backups](database-backups.md): scheduled backup configuration and restore procedures.
 - [Diagnostics and troubleshooting](diagnostics.md): GUI reports, administrative history, worker recovery, redaction, retention and upgrades.
+- [Central audit forwarding](central-audit-forwarding.md) covers syslog, Splunk HEC, Azure Log Analytics, delivery tests and replay.
 - [Durable workers](durable-workers.md), [scan worker](dedicated-scan-worker.md), and [worker isolation](../deploy/worker-isolation.md): service responsibilities, upgrades, and host acceptance.
 - [OIDC integration](KEYCLOAK-INTEGRATION.md) and [trusted CAs](trusted-ca-and-repository-policies.md): identity-provider and repository trust configuration.
 - [Validator appliance](validator-appliance.md): dedicated runtime-validation hosts.

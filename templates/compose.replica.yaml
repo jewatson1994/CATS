@@ -9,9 +9,22 @@
 # docker compose --env-file /secure/replica.env -f templates/compose.replica.yaml up -d --wait --pull never
 name: cats-replica
 
+# The Docker daemon writes service output to this deployment's local Unix socket.
+x-cats-component-logging: &cats_component_logging
+  driver: fluentd
+  options:
+    fluentd-address: "unix://${CATS_COMPONENT_LOG_SOCKET_DIR:-/run/cats-logs-${COMPOSE_PROJECT_NAME:-cats-replica}}/ingest.sock"
+    fluentd-async: "true"
+    fluentd-request-ack: "true"
+    fluentd-sub-second-precision: "true"
+    fluentd-buffer-limit: "8192"
+    tag: cats.compose
+    labels: "com.docker.compose.service,com.docker.compose.project"
+
 services:
   # Portal — browse retained evidence and administer replica synchronization.
   portal:
+    logging: *cats_component_logging
     # Prefer interactive requests when the host is CPU-bound.
     cpu_shares: 2048
     image: ${CATS_IMAGE:-${CATS_REPLICA_IMAGE:?Set CATS_IMAGE to the full CATS image}}
@@ -76,6 +89,7 @@ services:
     restart: unless-stopped
 
   polling-worker:
+    logging: *cats_component_logging
     image: ${CATS_IMAGE:-${CATS_REPLICA_IMAGE:?Set CATS_IMAGE to the full CATS image}}
     entrypoint: []
     command: ["python", "-m", "app.polling_worker"]
@@ -118,6 +132,7 @@ services:
 
   # OCI access — enforce release approval and serve verified local content.
   oci-proxy:
+    logging: *cats_component_logging
     image: ${CATS_IMAGE:-${CATS_REPLICA_IMAGE:?Set CATS_IMAGE to the full CATS image}}
     entrypoint: []
     command: ["uvicorn", "app.oci_proxy:app", "--host", "0.0.0.0", "--port", "5000", "--no-proxy-headers", "--ssl-certfile", "/app/oci-certs/tls.crt", "--ssl-keyfile", "/app/oci-certs/tls.key"]
@@ -148,6 +163,7 @@ services:
 
   # HTTPS ingress — route both DNS names on port 443 without decrypting traffic.
   nginx:
+    logging: *cats_component_logging
     # Pinned official stable-alpine image, including stream + ssl_preread support.
     image: ${CATS_NGINX_IMAGE:-nginx:stable-alpine@sha256:0e52bd054126cdc040b1276c0af347aeb02a41b9cfe305d6094767ac30e97949}
     # Shell and Nginx variables use $$ so Compose leaves them for the container.
@@ -240,9 +256,36 @@ services:
       retries: 3
       start_period: 10s
 
+  replica-audit-reporter:
+    logging: *cats_component_logging
+    image: ${CATS_IMAGE:-${CATS_REPLICA_IMAGE:?Set CATS_IMAGE to the full CATS image}}
+    entrypoint: []
+    command: ["python", "-B", "-u", "-m", "app.replica_audit_reporter"]
+    environment:
+      PGAPPNAME: cats-log-forwarder
+      CATS_OPERATIONAL_LOG_RETENTION_DAYS: ${CATS_OPERATIONAL_LOG_RETENTION_DAYS:-7}
+      CATS_OPERATIONAL_LOG_MAX_ROWS: ${CATS_OPERATIONAL_LOG_MAX_ROWS:-50000}
+      CATS_OPERATIONAL_QUEUE_MAX_ROWS: ${CATS_OPERATIONAL_QUEUE_MAX_ROWS:-50000}
+      CATS_MODE: replica
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cats}@db:5432/${POSTGRES_DB:-cats}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      CATS_AUDIT_HQ_URL: ${CATS_AUDIT_HQ_URL:-}
+      CATS_AUDIT_HQ_TOKEN: ${CATS_AUDIT_HQ_TOKEN:-}
+      CATS_AUDIT_HQ_CA_B64: ${CATS_AUDIT_HQ_CA_B64:-}
+    depends_on:
+      portal:
+        condition: service_healthy
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
   # Database — local accounts, replica state, and authorization records.
   db:
+    logging: *cats_component_logging
     image: postgres:16
+    command: ["postgres", "-c", "log_line_prefix=%m [%p] %a %u@%d "]
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-cats}
       POSTGRES_USER: ${POSTGRES_USER:-cats}
@@ -258,7 +301,33 @@ services:
 
 # Persistent storage belongs to the cats-replica project, separate from main CATS.
 # Preserve these volumes and the encryption key during upgrades.
+
+  component-log-collector:
+    image: ${CATS_IMAGE:-${CATS_REPLICA_IMAGE:?Set CATS_IMAGE to the full CATS image}}
+    entrypoint: []
+    command: ["python", "-B", "-u", "-m", "app.compose_log_collector"]
+    environment:
+      CATS_MODE: replica
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cats}@db:5432/${POSTGRES_DB:-cats}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      PGAPPNAME: cats-log-collector
+      CATS_COMPONENT_LOG_SPOOL_MIB: ${CATS_COMPONENT_LOG_SPOOL_MIB:-512}
+    volumes:
+      - type: bind
+        source: "${CATS_COMPONENT_LOG_SOCKET_DIR:-/run/cats-logs-${COMPOSE_PROJECT_NAME:-cats-replica}}"
+        target: /run/cats-log-input
+      - component_log_spool:/var/lib/cats-component-logs
+    # The receiver cannot send its own stdout back through its input socket.
+    logging:
+      driver: local
+    user: "0:0"
+    cap_drop: [ALL]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
 volumes:
+  component_log_spool:
   # PostgreSQL data.
   replica_db:
   # Imported releases, evidence, and replica files.

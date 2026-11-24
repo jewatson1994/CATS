@@ -70,6 +70,12 @@ class DiagnosticMiddleware:
                     headers = [(key, value) for key, value in headers if key.lower() != b"cache-control"]
                     headers.append((b"cache-control", b"private, no-store"))
                 message = {**message, "headers": headers}
+                if (scope.get("path") == "/api/v1/component-logs/events"
+                        and getattr(request.state, "component_log_rejected", False)):
+                    # Rejected relay input must not recursively create outbound diagnostics.
+                    sent = True
+                    await send(message)
+                    return
                 content_type = next((value for key, value in headers if key.lower() == b"content-type"), b"")
                 compressed = any(key.lower() == b"content-encoding" for key, _ in headers)
                 if message["status"] >= 400 and (compressed or b"json" not in content_type) and not getattr(request.state, "diagnostic", None):

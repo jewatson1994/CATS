@@ -4,12 +4,16 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
+
+from app.validator_logging import capture_output
 
 
 def main() -> int:
     stopping = False
     children: list[subprocess.Popen] = []
+    readers = []
 
     def stop(_signal, _frame):
         nonlocal stopping
@@ -23,7 +27,14 @@ def main() -> int:
         for module in ("validator_server", "validator_admin_server"):
             if stopping:
                 break
-            children.append(subprocess.Popen([sys.executable, "-m", module]))
+            child = subprocess.Popen([sys.executable, "-u", "-m", module],
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                     env={**os.environ, "CATS_VALIDATOR_CAPTURED_BY_SUPERVISOR": "1"})
+            children.append(child)
+            for stream, console, channel in ((child.stdout, sys.stdout, "stdout"), (child.stderr, sys.stderr, "stderr")):
+                reader = threading.Thread(target=capture_output, args=(stream, console, module, channel), daemon=True)
+                reader.start()
+                readers.append(reader)
         while not stopping:
             if any(child.poll() is not None for child in children):
                 result = 1
@@ -40,6 +51,8 @@ def main() -> int:
             except subprocess.TimeoutExpired:
                 child.kill()
                 child.wait()
+        for reader in readers:
+            reader.join(timeout=1)
     return result
 
 

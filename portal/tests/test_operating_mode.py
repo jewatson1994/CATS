@@ -22,6 +22,15 @@ from app.auth import AuthContext, SYSTEM_ROLES
     ('DELETE', '/api/services/example'),
     ('PATCH', '/api/replica/sources/1'),
     ('POST', '/api/future-authoritative-endpoint'),
+    ('POST', '/api/admin/log-forwarding/destinations/1/clear'),
+    ('GET', '/api/admin/log-forwarding/destinations'),
+    ('POST', '/api/admin/log-forwarding/destinations'),
+    ('PUT', '/api/admin/log-forwarding/destinations/1'),
+    ('DELETE', '/api/admin/log-forwarding/destinations/1'),
+    ('POST', '/api/admin/log-forwarding/destinations/1/test'),
+    ('POST', '/api/admin/log-forwarding/destinations/1/replay'),
+    ('POST', '/api/v1/component-logs/events'),
+    ('DELETE', '/api/admin/log-forwarding/destinations'),
     ('POST', '/api/oci/upstreams/1/unrecognized-operation'),
     ('POST', '/api/services/example/local-overrides/1/edit'),
     ('POST', '/admin/configuration/signing'),
@@ -60,6 +69,7 @@ def test_replica_rejects_authoritative_and_unknown_operations(monkeypatch, metho
     ('POST', '/admin/users'), ('POST', '/admin/roles'),
     ('POST', '/admin/configuration/oidc'), ('POST', '/admin/configuration/trusted-certificates'),
     ('POST', '/api/replica/sync'), ('POST', '/api/replica/sources'),
+    ('GET', '/api/admin/log-forwarding/relay'),
     ('PUT', '/api/replica/sources/1'), ('POST', '/api/oci/upstreams'),
     ('PUT', '/api/oci/repositories/1'), ('POST', '/api/oci/principals/1/rotate'),
     ('POST', '/api/services/example/local-overrides'),
@@ -174,8 +184,8 @@ def test_portal_import_only_requires_assessment_storage_in_full_mode(tmp_path, o
 
 
 @pytest.mark.parametrize('compose_path,expected_services', [
-    ('templates/compose.replica.external-ingress.yaml', {'db', 'portal', 'oci-proxy', 'polling-worker'}),
-    ('templates/compose.replica.yaml', {'db', 'portal', 'oci-proxy', 'polling-worker', 'nginx'}),
+    ('templates/compose.replica.external-ingress.yaml', {'db', 'portal', 'oci-proxy', 'polling-worker', 'replica-audit-reporter', 'component-log-collector'}),
+    ('templates/compose.replica.yaml', {'db', 'portal', 'oci-proxy', 'polling-worker', 'replica-audit-reporter', 'component-log-collector', 'nginx'}),
 ])
 def test_replica_compose_has_no_assessment_infrastructure(compose_path, expected_services):
     root = Path(__file__).resolve().parents[2]

@@ -136,7 +136,8 @@ from . import artifact_catalog, artifact_catalog_routes, release_revisions, patc
 from . import service_oci
 from . import replica_models, local_cyber_overrides, replica_routes
 from . import runtime_models, runtime_routes, runtime_report_pages, runtime_candidates
-from . import diagnostic_store, diagnostic_routes
+from . import diagnostic_store, diagnostic_routes, audit_forward_routes, audit_forward_store
+from . import component_log_history, component_log_ingest, replica_audit_reporter
 from . import topic_intake_models
 from .diagnostic_http import error_response, request_diagnostic, DiagnosticMiddleware
 from .diagnostics import public_diagnostic, sanitize, capture_failure
@@ -164,6 +165,8 @@ with migration_transaction(engine) as connection:
     upgrade_topic_scopes(connection)
     from .diagnostic_migrations import upgrade_connection as upgrade_diagnostics
     upgrade_diagnostics(connection)
+    audit_forward_store.upgrade_connection(connection)
+    component_log_ingest.upgrade_connection(connection)
     scan_coordination.upgrade_connection(connection)
     service_scan_schedule.upgrade_connection(connection)
     upgrade_connection(connection)
@@ -528,6 +531,10 @@ from .export_jobs import router as export_jobs_router
 app.include_router(jobs_router)
 app.include_router(export_jobs_router)
 app.include_router(diagnostic_routes.router)
+app.include_router(audit_forward_routes.router)
+app.include_router(component_log_ingest.router)
+app.include_router(component_log_history.router)
+app.include_router(replica_audit_reporter.router)
 from .upload_limits import UploadLimitMiddleware
 app.add_middleware(UploadLimitMiddleware)
 # Registered once, inside GZip: it measures uncompressed response bytes (the
@@ -3013,26 +3020,51 @@ def login(
     request: Request, username: str = Form(), password: str = Form(),
     next: str = Form(default="/"), db: Session = Depends(get_db),
 ):
-    user = db.scalar(select(User).where(User.username == username.strip().lower()))
+    identity = username.strip().lower()
+    user = None
+    if len(identity) <= 120 and "\x00" not in identity:
+        user = db.scalar(select(User).where(User.username == identity))
+
+    def audit_denial(reason, lockout_applied=False):
+        # An unauthenticated submission identifies a target, never an authenticated actor.
+        # Unknown input can contain a pasted credential. Retain only a stable fingerprint.
+        detail = ({"target_username": "".join(c for c in user.username[:120] if c.isprintable())}
+                  if user else {"attempted_identity_sha256": hashlib.sha256(identity.encode()).hexdigest()})
+        record_audit(db, None, "auth.login_failed", "authentication", user.id if user else None,
+                     reason=reason, outcome="denied", lockout_applied=lockout_applied,
+                     client_address=request.client.host[:255] if request.client else None, **detail)
+        db.commit()
+
     now = utcnow()
     configuration = get_global_configuration(db)
     if configuration.get("identity_mode", os.getenv("CATS_IDENTITY_MODE", "local")) not in {"local", "both"}:
+        audit_denial("local_login_disabled")
         return templates.TemplateResponse(request, "login.html", {
             "error": "Local account login is disabled. Use the organizational sign-in button.", "next": next,
             "oidc_available": True, "local_available": False,
             "oidc_provider_name": configured_oidc(configuration).get("provider_name") or "OIDC",
         }, status_code=403)
     from .account_models import AccountRetirement
-    valid = bool(user and user.enabled and not db.get(AccountRetirement, user.id)
-                 and (not user.locked_until or aware(user.locked_until) <= now))
-    valid = valid and verify_password(password, user.password_hash)
-    if not valid:
+    reason = None
+    if user is None:
+        reason = "unknown_account"
+    elif not user.enabled:
+        reason = "account_disabled"
+    elif db.get(AccountRetirement, user.id):
+        reason = "account_retired"
+    elif user.locked_until and aware(user.locked_until) > now:
+        reason = "account_locked"
+    elif not verify_password(password, user.password_hash):
+        reason = "invalid_credentials"
+    if reason:
+        lockout_applied = False
         if user and user.enabled:
             user.failed_login_count += 1
             if user.failed_login_count >= 5:
                 user.locked_until = now + timedelta(minutes=15)
                 user.failed_login_count = 0
-            db.commit()
+                lockout_applied = True
+        audit_denial(reason, lockout_applied)
         return templates.TemplateResponse(request, "login.html", {
             "error": "Invalid username or password.", "next": next,
             "oidc_available": oidc_enabled(configuration.get("identity_mode")),
@@ -11081,6 +11113,8 @@ def audit_page(request: Request, group_id: str = "", show: int = 10, page: int =
     pagination_base = '/admin/audit?' + urlencode({'group_id': group_id, 'page_size': values['page_size'], 'action': action})
     return templates.TemplateResponse(request, "audit.html", page_context(
         auth, **values, groups=groups, selected_group_id=selected_group_id,
+        may_manage_log_forwarding=audit_forward_routes.may_manage_log_forwarding(auth),
+        may_view_log_relay=replica_audit_reporter.may_view_log_relay(auth),
         configuration=configuration, saved=request.query_params.get("saved") == "1",
         pagination_base=pagination_base,
     ))
@@ -11105,6 +11139,8 @@ def general_policy_page(request: Request, group_id: str = "", db: Session = Depe
     events = db.scalars(query.limit(10)).all()
     return templates.TemplateResponse(request, "general_policy.html", page_context(
         auth, events=events, groups=groups, selected_group_id=selected_group_id,
+        may_manage_log_forwarding=audit_forward_routes.may_manage_log_forwarding(auth),
+        may_view_log_relay=replica_audit_reporter.may_view_log_relay(auth),
         selected_group=db.get(Group, selected_group_id) if selected_group_id is not None else None,
         export_templates=[{"kind": kind, "name": PURPOSE_NAMES[kind],
                            "source": purpose_template_policy(db, kind, selected_group_id)[1],

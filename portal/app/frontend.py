@@ -190,6 +190,9 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
         "next_path": _DATA_ENDPOINT_PAGES.get(path, path) + ("?" + request.url.query if request.url.query else ""),
     }
     data["can"] = {permission: {"*": allowed} for permission, allowed in data["permissions"].items()}
+    if name in {"audit.html", "general_policy.html"}:
+        data["may_manage_log_forwarding"] = bool(context.get("may_manage_log_forwarding"))
+        data["may_view_log_relay"] = bool(context.get("may_view_log_relay"))
     if name == "cyber_overrides.html":
         service = context.get("service")
         data["service"] = _fields(service, ("id", "service_key", "name"))
