@@ -538,25 +538,36 @@ async def request_approval(request: Request, db: Session = Depends(get_db), auth
 
 def runtime_review_notifications(db, auth, limit=10):
     from .runtime_candidates import RuntimeReleaseCandidate as Candidate
-    roles = ('runtime.review_release', 'runtime.prepare_release')
+    if limit <= 0:
+        return []
+    review_ids = auth.accessible_service_ids('runtime.review_release')
+    manager_ids = auth.accessible_service_ids('runtime.prepare_release')
+    filters = []
+    if review_ids != set() and auth.user.id is not None:
+        pending = (Candidate.status == 'submitted') & or_(
+            CyberApproval.requested_by_id.is_(None), CyberApproval.requested_by_id != auth.user.id)
+        if review_ids is not None:
+            pending &= Service.id.in_(review_ids)
+        filters.append(pending)
+    if manager_ids != set():
+        outcomes = Candidate.status.in_(('returned', 'denied', 'approved')) & or_(
+            Candidate.current.is_(True), CyberApproval.decided_at >= utcnow() - timedelta(days=7))
+        if manager_ids is not None:
+            outcomes &= Service.id.in_(manager_ids)
+        filters.append(outcomes)
+    if not filters:
+        return []
+    query = select(Candidate.id, Candidate.status, Candidate.current, Service.id, Service.service_key,
+        Service.name, CyberApproval.id).select_from(Candidate).join(Service, Service.id == Candidate.service_id).join(
+        CyberApproval, CyberApproval.id == Candidate.approval_id).where(or_(*filters)).order_by(
+        (Candidate.status == 'submitted').desc(), CyberApproval.id.desc()).execution_options(yield_per=limit)
     allowed = auth.accessible_service_ids('service.view')
-    query = select(Candidate.id, Candidate.status, Candidate.current, Service.id, Service.service_key, Service.name,
-        CyberApproval.id, CyberApproval.requested_by_id).select_from(Candidate).join(Service, Service.id == Candidate.service_id).join(
-        CyberApproval, CyberApproval.id == Candidate.approval_id).where(
-        or_(Candidate.current.is_(True), Candidate.status == 'submitted',
-            CyberApproval.decided_at >= utcnow() - timedelta(days=7)),
-        Candidate.status.in_(('submitted', 'returned', 'denied', 'approved'))
-    ).order_by((Candidate.status == 'submitted').desc(), CyberApproval.id.desc())
     if allowed is not None:
         query = query.where(Service.id.in_(allowed))
-    scoped = [auth.accessible_service_ids(permission) for permission in roles]
-    if all(ids is not None for ids in scoped):
-        query = query.where(Service.id.in_(set().union(*scoped)))
     items = []
-    for candidate_id, status, current, service_id, service_key, service_name, approval_id, submitter_id in db.execute(query):
-        pending = status == 'submitted'
-        if pending:
-            if not _runtime_reviewer(auth, service_id) or auth.user.id is None or auth.user.id == submitter_id:
+    for candidate_id, status, current, service_id, service_key, service_name, approval_id in db.execute(query):
+        if status == 'submitted':
+            if not _runtime_reviewer(auth, service_id):
                 continue
         elif not _runtime_manager(auth, service_id):
             continue

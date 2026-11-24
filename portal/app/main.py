@@ -1484,9 +1484,9 @@ def page_context(auth: AuthContext, **values):
                 requester = item["display_name"] or item["username"]
                 name = f"{requester} · {item['service_name']}" if item.get("service_name") else requester
                 access_notifications.append({"label": "Access requested", "service": name, "href": "/admin#access-requests"})
-            from .runtime_application_routes import discovery_notifications
-            actionable_notifications = (access_notifications + cyber_approvals.runtime_review_notifications(nav_db, auth)
-                + discovery_notifications(nav_db, auth) + artifact_catalog_routes.replacement_notifications(nav_db, auth)
+            from .runtime_application_routes import runtime_notifications
+            actionable_notifications = (access_notifications + runtime_notifications(nav_db, auth)
+                + artifact_catalog_routes.replacement_notifications(nav_db, auth)
                 + actionable_notifications)
             pending_request_count = len(actionable_notifications)
             # The pending rows already use the same status and service scope

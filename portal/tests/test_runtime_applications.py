@@ -1,12 +1,13 @@
 """Discovery, human assignment, release preparation and role-specific reporting via HTTP."""
 from types import SimpleNamespace
 
-from sqlalchemy import func, select
+import pytest
+from sqlalchemy import event, func, select
 from app.auth import SYSTEM_ROLES
 from app.models import AuditEvent, Group, Service
 from app.runtime_applications import RuntimeApplication
 from app.runtime_candidates import RuntimeReleaseCandidate
-from app.runtime_application_routes import discovery_notifications
+from app.runtime_application_routes import discovery_notifications, runtime_notifications
 from test_runtime_routes import context, enroll, post, report, snapshot
 
 
@@ -47,6 +48,36 @@ def inventory(client):
 def assign(client, app, **choice):
     return post(client, 'applications/' + str(app['id']) + '/assignment', {
         'expected_fingerprint': app['fingerprint'], 'expected_service_id': app['service_id'], **choice})
+
+
+@pytest.mark.parametrize(('role', 'queries'), [
+    ('Assessor', 0), ('Administrator', 0), ('Cybersecurity', 1), ('Service Manager', 1),
+])
+def test_empty_runtime_notifications_skip_unnecessary_queries(context, role, queries):
+    _, db, auth = context
+    auth.user.role_assignments[0].role = SimpleNamespace(name=role, permissions=SYSTEM_ROLES[role])
+    statements = []
+    def record(connection, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+    event.listen(db.get_bind(), 'before_cursor_execute', record)
+    try:
+        assert runtime_notifications(db, auth) == []
+    finally:
+        event.remove(db.get_bind(), 'before_cursor_execute', record)
+    assert len(statements) == queries
+    if role == 'Cybersecurity':
+        assert 'runtime_release_candidates' in statements[0] and 'runtime_applications' not in statements[0]
+
+
+def test_group_without_services_receives_unassigned_application_notifications(context):
+    client, db, auth, agent = setup(context)
+    service = db.get(Service, 1)
+    service.groups.clear()
+    db.commit()
+    publish(client, agent, 1, [component()])
+    assert auth.accessible_service_ids('runtime.prepare_release') == set()
+    notifications = runtime_notifications(db, auth)
+    assert [(item['label'], item['count']) for item in notifications] == [('Unassigned applications', 1)]
 
 
 def test_assignment_is_scoped_idempotent_and_changed_bytes_make_a_revision(context):
@@ -240,7 +271,7 @@ def test_replica_manager_maps_existing_import_for_reporting_only(context, monkey
     assert assign(client, app, service_id=1).status_code == 403
     manager.role = SimpleNamespace(name='Service Manager', permissions=SYSTEM_ROLES['Service Manager'])
     assert assign(client, app, service_id=1).is_success
-    assert discovery_notifications(db, auth)[0]['label'] == 'Application assigned'
+    assert runtime_notifications(db, auth)[0]['label'] == 'Application assigned'
     assert not db.scalars(select(RuntimeReleaseCandidate)).first()
 
 

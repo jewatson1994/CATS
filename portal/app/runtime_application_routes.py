@@ -7,7 +7,7 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select, update
+from sqlalchemy import false, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, load_only
 
@@ -228,40 +228,68 @@ def assign(identity: int, data: Assignment, request: Request, db: Session = Depe
     return {'id': app.id, 'service_id': service.id, 'service_key': service.service_key}
 
 
-def discovery_notifications(db, auth, limit=8):
+def runtime_notifications(db, auth):
+    from .cyber_approvals import runtime_review_notifications
     from .runtime_candidates import RuntimeReleaseCandidate as Candidate
+    granted = {permission for assignment in auth.effective_assignments for permission in (assignment.role.permissions or ())}
+    prepare = 'runtime.prepare_release' in granted and permission_available('runtime.prepare_release')
+    review = 'runtime.review_release' in granted and permission_available('runtime.review_release')
+    report = 'runtime.map_import' in granted and permission_available('runtime.map_import')
+    if not (prepare or review or report):
+        return []
+    # Check presence before resolving group memberships and imported-service provenance.
+    candidates, applications = db.execute(select(
+        select(Candidate.id).exists() if prepare or review else false(),
+        select(Application.id).exists() if prepare or report else false(),
+    )).one()
+    items = runtime_review_notifications(db, auth) if candidates else []
+    if applications or (prepare and candidates):
+        items += discovery_notifications(db, auth, has_applications=applications, has_candidates=prepare and candidates)
+    return items
+
+
+def discovery_notifications(db, auth, limit=8, *, has_applications=True, has_candidates=True):
+    from .runtime_candidates import RuntimeReleaseCandidate as Candidate
+    if limit <= 0:
+        return []
     result = []
-    reporting_ids = reporting_targets(db, auth)
-    for env, count in db.execute(select(Environment, func.count(Application.id)).join(Application)
-            .where(Application.present.is_(True), Application.service_id.is_(None)).group_by(Environment.id).order_by(Environment.name)):
-        if reviews_environment(auth, env, reporting_ids):
-            result.append(dict(label='Unassigned applications', service=env.name, count=count, href=workspace_url))
+    reporting_ids = reporting_targets(db, auth) if has_applications else set()
+    if has_applications:
+        unassigned = select(Environment, func.count(Application.id)).join(Application).where(
+            Application.present.is_(True), Application.service_id.is_(None)
+        ).group_by(Environment.id).order_by(Environment.name).execution_options(yield_per=limit)
+        for env, count in db.execute(unassigned):
+            if reviews_environment(auth, env, reporting_ids):
+                result.append(dict(label='Unassigned applications', service=env.name, count=count, href=workspace_url))
+                if len(result) >= limit:
+                    return result
     visible = auth.accessible_service_ids('runtime.prepare_release')
-    query = select(Candidate, Service).join(Service, Candidate.service_id == Service.id).where(
-        Candidate.current.is_(True), Candidate.status == 'draft').options(
-        load_only(Candidate.id, Candidate.assessment_status), load_only(Service.id, Service.name, Service.service_key)
-    ).order_by(Candidate.id.desc())
-    if visible is not None:
-        query = query.where(Service.id.in_(visible))
-    for candidate, service in db.execute(query):
-        if not manages(auth, service.id):
-            continue
-        label = {'ready': 'Assessment complete · release ready for review', 'blocked': 'Release assessment needs attention'}.get(
-            candidate.assessment_status, 'Application assigned · assessment pending')
-        result.append(dict(label=label, service=service.name, href='/cyber-approvals?' + urlencode(
-            {'service': service.service_key, 'runtime_candidate_id': candidate.id})))
-        if len(result) >= limit:
-            break
-    if len(result) < limit:
+    if has_candidates and visible != set():
+        query = select(Candidate, Service).join(Service, Candidate.service_id == Service.id).where(
+            Candidate.current.is_(True), Candidate.status == 'draft').options(
+            load_only(Candidate.id, Candidate.assessment_status), load_only(Service.id, Service.name, Service.service_key)
+        ).order_by(Candidate.id.desc())
+        if visible is not None:
+            query = query.where(Service.id.in_(visible))
+        for candidate, service in db.execute(query.execution_options(yield_per=limit)):
+            if not manages(auth, service.id):
+                continue
+            label = {'ready': 'Assessment complete · release ready for review', 'blocked': 'Release assessment needs attention'}.get(
+                candidate.assessment_status, 'Application assigned · assessment pending')
+            result.append(dict(label=label, service=service.name, href='/cyber-approvals?' + urlencode(
+                {'service': service.service_key, 'runtime_candidate_id': candidate.id})))
+            if len(result) >= limit:
+                return result
+    if has_applications and (visible != set() or reporting_ids):
         recent = select(Application, Service).join(Service, Application.service_id == Service.id).join(
             Environment, Application.environment_id == Environment.id).where(Application.present.is_(True),
             Application.assigned_at >= now() - timedelta(days=7), Environment.cluster_role.in_(['production', 'unspecified'])
         ).options(load_only(Application.id), load_only(Service.id, Service.name)).order_by(Application.assigned_at.desc())
         if visible is not None:
             recent = recent.where(Service.id.in_(visible | reporting_ids))
-        for app, service in db.execute(recent):
+        for app, service in db.execute(recent.execution_options(yield_per=limit)):
             if manages(auth, service.id) or service.id in reporting_ids:
                 result.append(dict(label='Application assigned', service=service.name, href=workspace_url))
                 if len(result) >= limit:
                     break
-    return result[:limit]
+    return result
