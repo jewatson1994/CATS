@@ -1,28 +1,22 @@
 """Restart-safe signed OCI consumer, available alongside full CATS or on a replica."""
-from contextlib import asynccontextmanager
-from datetime import datetime, timezone, timedelta
-import asyncio
+from datetime import datetime, timezone
 import logging
 import hashlib
 from pathlib import Path
-import os
-import threading
-import uuid
 
-from sqlalchemy import select
+from sqlalchemy import extract, or_, select
 
 from .database import SessionLocal
 from .auth import record_audit
 from . import durable_jobs as jobs, portable_release
 from .oci_models import OCIUpstream
-from .replica_models import ReplicaSource, ReplicaRelease, ReplicaServiceState
+from .replica_models import ReplicaSource, ReplicaRelease, ReplicaServiceState, reserve_sqlite_writer
 from .replica_integrity import verify_record, digest
 from .replica_import import reconcile
 from .release_documentation import registry_environment
-from .release_validity import utc
 from .secrets import decrypt_secret
 from .trusted_ca import configured_certificates
-from .diagnostics import build_diagnostic, record_diagnostic, public_diagnostic, enqueue_diagnostic
+from .diagnostics import build_diagnostic, record_diagnostic, public_diagnostic
 
 KIND = 'replica_sync'
 FAILURE_MESSAGES = {
@@ -46,12 +40,32 @@ def retained_complete(release):
         return False
 
 
+def _active_job(source_id):
+    return select(jobs.DurableJob).where(
+        jobs.DurableJob.kind == KIND,
+        jobs.DurableJob.status.in_(('queued', 'running')),
+        jobs.DurableJob.payload['source_id'].as_integer() == source_id)
+
+
+def _retained_reference(session_factory, source_id, upstream_id, trusted, reference):
+    # Read one discovered digest. Hash the retained projection and archive only
+    # after returning the connection, and never touch unrelated release files.
+    with session_factory() as db:
+        release = db.scalar(select(ReplicaRelease)
+            .join(ReplicaServiceState, ReplicaServiceState.service_id == ReplicaRelease.service_id)
+            .where(ReplicaRelease.source_reference == reference,
+                   ReplicaServiceState.source_id == source_id,
+                   ReplicaServiceState.upstream_id == upstream_id,
+                   ReplicaRelease.publisher.in_(trusted))
+            .order_by(ReplicaRelease.id.desc()).limit(1))
+    return release is not None and retained_complete(release)
+
+
 def enqueue(db, source, actor_id=None):
     # Source row locking serializes manual and scheduled admission.
+    reserve_sqlite_writer(db)
     db.scalar(select(ReplicaSource).where(ReplicaSource.id == source.id).with_for_update())
-    pending = db.scalars(select(jobs.DurableJob).where(jobs.DurableJob.kind == KIND,
-        jobs.DurableJob.status.in_(['queued', 'running']))).all()
-    existing = next((job for job in pending if job.payload.get('source_id') == source.id), None)
+    existing = db.scalar(_active_job(source.id).limit(1))
     if existing:
         return existing
     return jobs.submit(db, kind=KIND, payload={'source_id': source.id},
@@ -64,6 +78,8 @@ def sync(ctx, payload):
     ctx.checkpoint({'failure_code': None, 'diagnostics': [], 'diagnostics_truncated': 0})
     source_id = payload['source_id']
     with ctx.session_factory() as db:
+        if ctx._owned(db).cancel_requested:
+            raise jobs.JobCancelled()
         source = db.get(ReplicaSource, source_id)
         upstream = db.get(OCIUpstream, source.upstream_id) if source else None
         if not source or not source.enabled or not upstream or not upstream.enabled:
@@ -79,14 +95,6 @@ def sync(ctx, payload):
         certificates = configured_certificates(db)
         repository, trusted = source.repository, list(source.trusted_publishers)
         host = upstream.endpoint.removeprefix('https://').rstrip('/')
-        # A known registry digest does not prove our retained local evidence is
-        # still present or intact. Re-fetch damaged/missing content for recovery
-        # or a fail-closed import error, and never borrow another source's state.
-        known = {release.source_reference for release in db.scalars(select(ReplicaRelease)
-            .join(ReplicaServiceState, ReplicaServiceState.service_id == ReplicaRelease.service_id)
-            .where(ReplicaServiceState.source_id == source.id,
-                   ReplicaServiceState.upstream_id == source.upstream_id,
-                   ReplicaRelease.publisher.in_(trusted))) if retained_complete(release)}
     result = {'discovered': 0, 'activated': 0, 'revoked': 0, 'unchanged': 0, 'failed': 0,
               'diagnostics': [], 'diagnostics_truncated': 0}
     try:
@@ -96,7 +104,7 @@ def sync(ctx, payload):
             for reference in portable_release.discover_release_references(host, repository, env):
                 ctx.check()
                 result['discovered'] += 1
-                if reference in known:
+                if _retained_reference(ctx.session_factory, source_id, configuration[0], trusted, reference):
                     result['unchanged'] += 1
                     continue
                 with ctx.session_factory() as db:
@@ -109,9 +117,6 @@ def sync(ctx, payload):
                     verified = portable_release.fetch_release(reference, env, trusted)
                     ctx.check()
                     with ctx.session_factory() as db:
-                        owned = ctx._owned(db)
-                        if owned.cancel_requested:
-                            raise jobs.JobCancelled()
                         current = db.scalar(select(ReplicaSource).where(ReplicaSource.id == source_id).with_for_update())
                         local_registry = db.get(OCIUpstream, current.upstream_id) if current else None
                         if (not current or not current.enabled or not local_registry or not local_registry.enabled
@@ -122,6 +127,10 @@ def sync(ctx, payload):
                                      key_fingerprint=verified['key_fingerprint'],
                                      complete=True, correlation_id=ctx.job.correlation_id)
                         outcome = reconcile(db, current, verified)
+                        # Heartbeats must be able to renew during a long import.
+                        # Fence the projection immediately before publishing it.
+                        if ctx._owned(db).cancel_requested:
+                            raise jobs.JobCancelled()
                         db.commit()
                     result[outcome['status']] += 1
                 except (jobs.JobCancelled, jobs.LeaseLost, jobs.JobError):
@@ -161,8 +170,11 @@ def sync(ctx, payload):
             ctx.checkpoint({'failure_code': 'release_verification_failed'})
             raise RuntimeError('Incomplete release replication')
         return result
+    except (jobs.LeaseLost, jobs.JobCancelled):
+        raise
     except Exception:
         with ctx.session_factory() as db:
+            ctx._owned(db)
             source = db.get(ReplicaSource, source_id)
             if source and not source.last_error:
                 source.last_error = f'Local registry sync failed. Check connectivity, CA trust, pull credentials and repository scope. Reference: {ctx.job.correlation_id}'
@@ -171,37 +183,20 @@ def sync(ctx, payload):
 
 
 def schedule_due(session_factory=SessionLocal):
-    now = datetime.now(timezone.utc)
-    with session_factory() as db:
-        for source in db.scalars(select(ReplicaSource).where(ReplicaSource.enabled.is_(True))):
-            if source.last_attempt_at is None or utc(source.last_attempt_at) + timedelta(seconds=source.poll_seconds) <= now:
-                enqueue(db, source)
-        db.commit()
-
-
-@asynccontextmanager
-async def replica_lifespan():
-    if os.getenv('CATS_REPLICA_SYNC_ENABLED', 'true').lower() not in {'1', 'true', 'yes'}:
-        yield
-        return
-    stop = threading.Event()
-    worker_id = 'replica-' + uuid.uuid4().hex[:16]
-    def worker():
-        while not stop.is_set():
-            try:
-                schedule_due()
-                job = jobs.claim([KIND], worker_id)
-                if job:
-                    jobs.execute(job, sync)
-                    continue
-            except Exception as exc:
-                enqueue_diagnostic(build_diagnostic(exc, component='replica', operation='worker_poll'))
-                logging.getLogger(__name__).error('replica_worker_failure type=%s', type(exc).__name__)
-            stop.wait(5)
-    thread = threading.Thread(target=worker, name='replica-sync', daemon=True)
-    thread.start()
-    try:
-        yield
-    finally:
-        stop.set()
-        await asyncio.to_thread(thread.join, 5)
+    """Admit a bounded batch. Release queue and source locks after each admission."""
+    now = datetime.now(timezone.utc).timestamp()
+    for _ in range(16):
+        with session_factory() as db:
+            reserve_sqlite_writer(db)
+            source = db.scalar(select(ReplicaSource)
+                .join(OCIUpstream, OCIUpstream.id == ReplicaSource.upstream_id)
+                .where(ReplicaSource.enabled.is_(True), OCIUpstream.enabled.is_(True),
+                       or_(ReplicaSource.last_attempt_at.is_(None),
+                           extract('epoch', ReplicaSource.last_attempt_at) + ReplicaSource.poll_seconds <= now),
+                       ~_active_job(ReplicaSource.id).exists())
+                .order_by(ReplicaSource.last_attempt_at.asc().nulls_first(), ReplicaSource.id)
+                .limit(1).with_for_update(of=ReplicaSource, skip_locked=True))
+            if source is None:
+                return
+            enqueue(db, source)
+            db.commit()

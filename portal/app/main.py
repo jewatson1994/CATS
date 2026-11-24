@@ -20,7 +20,7 @@ from collections import OrderedDict
 import time
 import tarfile
 import uuid
-from contextlib import asynccontextmanager, ExitStack
+from contextlib import asynccontextmanager, ExitStack, nullcontext
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -36,13 +36,14 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from .service_exports import (format_sheet, _service_mitigations_book,
                               _service_findings_book, _service_diagrams_bytes, _service_sbom_components,
                               _service_raw_scanner_bytes, _service_sboms_bytes)
 from .frontend import FrontendTemplates as Jinja2Templates
 from starlette.middleware.gzip import GZipMiddleware
-from sqlalchemy import and_, case, delete, false, func, inspect, or_, select, text, true, update
+from sqlalchemy import and_, case, delete, false, func, insert, inspect, or_, select, text, true, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, defer, selectinload
 from pydantic import ValidationError
@@ -135,6 +136,7 @@ from . import service_oci
 from . import replica_models, local_cyber_overrides, replica_routes
 from . import runtime_models, runtime_routes, runtime_report_pages, runtime_candidates
 from . import diagnostic_store, diagnostic_routes
+from . import topic_intake_models
 from .diagnostic_http import error_response, request_diagnostic, DiagnosticMiddleware
 from .diagnostics import public_diagnostic, sanitize, capture_failure
 from .service_evidence import view_executions
@@ -157,6 +159,8 @@ from .preview_cleanup import preview_cleanup_lifespan
 with migration_transaction(engine) as connection:
     Base.metadata.create_all(bind=connection, tables=portal_tables())
     runtime_models.upgrade_connection(connection)
+    from .schema_migrations import upgrade_topic_scopes
+    upgrade_topic_scopes(connection)
     from .diagnostic_migrations import upgrade_connection as upgrade_diagnostics
     upgrade_diagnostics(connection)
     scan_coordination.upgrade_connection(connection)
@@ -444,10 +448,10 @@ def _start_read_model_maintenance():
 async def app_lifespan(_app: FastAPI):
     from .operating_mode import is_replica
     if is_replica():
-        from .replica_sync import replica_lifespan
-        async with replica_lifespan():
-            yield
+        yield
         return
+    from .discovery_sources import prepare_shared_upload_root
+    prepare_shared_upload_root()
     # Compose runs imports in a dedicated process. Legacy single-database
     # installations retain their startup behavior until configured to split.
     if not os.getenv('INTELLIGENCE_DATABASE_URL'):
@@ -468,8 +472,7 @@ async def app_lifespan(_app: FastAPI):
     scan_monitor = asyncio.create_task(scan_protocol.maintenance())
     _start_read_model_maintenance()
     try:
-        from .replica_sync import replica_lifespan
-        async with preview_cleanup_lifespan(SessionLocal), replica_lifespan():
+        async with preview_cleanup_lifespan(SessionLocal):
             yield
     finally:
         scan_monitor.cancel()
@@ -495,6 +498,10 @@ app.include_router(service_oci.router)
 app.include_router(cyber_approvals.router)
 app.include_router(risk_routes.router)
 app.include_router(discovery_routes.router)
+from .topic_intake_admin import router as topic_admin_router
+from .topic_intake_claims import router as topic_claim_router
+app.include_router(topic_admin_router)
+app.include_router(topic_claim_router)
 app.include_router(discovery_distributions.router)
 app.include_router(oci_admin.router)
 from .oci_service_access import router as oci_service_access_router, service_pull_is_public
@@ -541,23 +548,30 @@ def access_pending_response(request, db, auth):
     }, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
 
+def _pending_access_response(request: Request):
+    path = request.url.path
+    with SessionLocal() as db:
+        auth = optional_user(request, db)
+        if not auth or access_requests.has_effective_access(auth):
+            return None
+        access_requests.register_pending_request(db, auth)
+        db.commit()
+        if path.startswith("/api/") or request.method != "GET":
+            return JSONResponse({"detail": "Request service access at /account/access."}, status_code=403,
+                                headers={"Cache-Control": "no-store"})
+        return RedirectResponse("/account/access", status_code=303, headers={"Cache-Control": "no-store"})
+
+
 @app.middleware("http")
 async def pending_access_gate(request: Request, call_next):
-    # Authenticated accounts without effective access must not fall through to
-    # anonymous/public workflows or receive a navigation/data payload.
+    # Keep synchronous session lookups off the event loop shared by all page requests.
     path = request.url.path
     account_action = request.method == "POST" and (
         path in {"/logout", "/account/access/service"} or re.fullmatch(r"/account/announcements/\d+/read", path))
     if request.cookies.get(SESSION_COOKIE) and not account_action and not (request.method == "GET" and path == "/account/access"):
-        with SessionLocal() as db:
-            auth = optional_user(request, db)
-            if auth and not access_requests.has_effective_access(auth):
-                access_requests.register_pending_request(db, auth)
-                db.commit()
-                if path.startswith("/api/") or request.method != "GET":
-                    return JSONResponse({"detail": "Request service access at /account/access."}, status_code=403,
-                                        headers={"Cache-Control": "no-store"})
-                return RedirectResponse("/account/access", status_code=303, headers={"Cache-Control": "no-store"})
+        response = await run_in_threadpool(_pending_access_response, request)
+        if response is not None:
+            return response
     return await call_next(request)
 
 
@@ -666,7 +680,7 @@ PATCH_PROCESSES: dict[str, subprocess.Popen] = {}
 PATCH_JOB_LOCK = threading.Lock()
 PATCH_WORKER_URL = os.getenv("CATS_PATCH_WORKER_URL", "").rstrip("/")
 PATCH_WORKER_TOKEN = os.getenv("CATS_PATCH_WORKER_TOKEN", "")
-REMEDIATION_JOB_ROOT = Path(os.getenv("CATS_REMEDIATION_JOB_ROOT", Path(tempfile.gettempdir()) / "cats-remediation-jobs"))
+REMEDIATION_JOB_ROOT = cyber_approvals.remediation_job_root()
 # Replicas never run assessment jobs and need no access to their working paths.
 if not is_replica():
     for job_root in (PUBLIC_JOB_ROOT, PATCH_JOB_ROOT, REMEDIATION_JOB_ROOT):
@@ -1423,6 +1437,7 @@ def excel_datetime(value):
 
 
 def page_context(auth: AuthContext, **values):
+    from .topic_intake_claims import may_view_unclaimed, scope_user_session
     from .imported_services import is_imported_service
     from sqlalchemy.orm import object_session
     view = values.get("view") or {}
@@ -1449,7 +1464,11 @@ def page_context(auth: AuthContext, **values):
     announcement = None
     try:
         allowed_services = auth.accessible_service_ids("service.view")
-        with SessionLocal() as nav_db:
+        # Navigation shares the request's scoped connection. Under load, taking
+        # a second connection here would make page readers wait on each other.
+        request_db = object_session(auth.user) if hasattr(auth.user, "_sa_instance_state") else None
+        with (nullcontext(request_db) if request_db is not None else SessionLocal()) as nav_db:
+            scope_user_session(nav_db)
             announcement = announcements.current(nav_db, auth.user.id)
             request_query = select(
                 WorkflowRequest.request_type, WorkflowRequest.service_id,
@@ -1502,6 +1521,8 @@ def page_context(auth: AuthContext, **values):
         cache_scope_value = f"uncached-{uuid.uuid4().hex}"
     return {
         "may_claim_accounts": access_requests.is_cybersecurity(auth),
+        "may_view_unclaimed": may_view_unclaimed(auth),
+        "may_manage_topic_sources": not is_replica() and auth.can_manage_group(None),
         "may_manage_accounts": auth.has("user.manage") or access_requests.is_cybersecurity(auth),
         "may_manage_risk_policy": any(a.service_id is None and "config.manage" in (a.role.permissions or []) for a in auth.effective_assignments),
         "current_user": auth.user,
@@ -1890,7 +1911,7 @@ def service_lifecycle(service: Service) -> str:
     if archive_state(service):
         return "archived"
     status = str(getattr(service, "lifecycle_status", "active") or "active").lower()
-    return status if status in {"active", "staged"} else "active"
+    return status if status in {"active", "staged", "unclaimed"} else "active"
 
 
 def workbook_response(workbook: Workbook, filename: str):
@@ -2393,6 +2414,8 @@ def _overview_services_and_configurations(db: Session, auth: AuthContext, config
     services = ([SimpleNamespace(**row._mapping) for row in db.execute(query)]
                 if projected else list(db.scalars(query)))
     service_ids = [service.id for service in services]
+    if db.info.get("topic_intake_filtered"):
+        db.info.setdefault("topic_visible_service_ids", set()).update(service_ids)
     groups_by_service: dict[int, list[int]] = {}
     group_ids: set[int] = set()
     if service_ids:
@@ -3356,11 +3379,19 @@ def queue_dependency_projection(db: Session, background_tasks: BackgroundTasks, 
         return None
 
 
-def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = True, project_credential=None):
+def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = True, project_credential=None, topic_revision_id=None):
     from .imported_services import require_local_service
-    target_id = db.scalar(select(Service.id).where(Service.service_key == payload.service.id))
-    if target_id is not None:
-        require_local_service(db, target_id)
+    target = db.execute(select(Service.id, Service.lifecycle_status).where(Service.service_key == payload.service.id)
+                        .execution_options(include_topic_intake=True)).first()
+    if target is not None:
+        require_local_service(db, target.id)
+        if target.lifecycle_status == "unclaimed" or topic_revision_id is not None:
+            from .topic_intake_models import TopicProject, TopicRevision
+            scan_id = db.scalar(select(TopicRevision.scan_job_id).join(TopicProject, TopicProject.id == TopicRevision.project_id)
+                .where(TopicRevision.id == topic_revision_id, TopicProject.latest_revision_id == TopicRevision.id,
+                       TopicProject.service_id == target.id, TopicRevision.commit_sha == payload.commit_sha))
+            if not scan_id or payload.execution_id != "public:" + scan_id:
+                raise HTTPException(409, "Unclaimed service ingestion requires the bound Discovery scan")
     if not payload.fixable_only:
         raise HTTPException(status_code=422, detail="Portal accepts fixable-only assessments")
     existing = db.scalar(select(Execution).where(Execution.execution_key == payload.execution_id))
@@ -3505,6 +3536,8 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
     db.flush()
     from .sbom_components import retain_components
     retain_components(db, execution.id, payload.sbom_components)
+    from .settings_worker import fence_ingestion
+    fence_ingestion(db)
     reconcile_watchlist_matches(db, execution)
     observed = set()
     finding_by_cve: dict[str, Finding] = {}
@@ -5029,6 +5062,10 @@ def ingest_public_scan(
         job = PUBLIC_JOBS[job_id]
     if job.get("proposal_context"):
         raise HTTPException(409, "Proposed inventory scans cannot be ingested into active service evidence")
+    topic_job = bool(job.get("topic_intake"))
+    if topic_job and (request is not None or service_id != job.get("ingest_service_id")
+                      or service_version is not None or scan_scope is not None):
+        raise HTTPException(409, "GitLab topic scans are automatically ingested into their bound revision")
     project_job = bool(job.get("pipeline_input_kind"))
     if project_job and (request is not None or job.get("ingest_service_id") != service_id or service_version is not None or scan_scope is not None):
         raise HTTPException(409, "Project scans are automatically ingested into their bound service and version")
@@ -5045,6 +5082,9 @@ def ingest_public_scan(
     service = db.scalar(service_query.with_for_update() if project_job else service_query)
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
+    if topic_job:
+        from .topic_intake_processing import bind_result, verify_scan
+        topic_revision = verify_scan(db, job_id, job, service)
     if project_job:
         from .pipeline_scan_dispatch import active_owner_id
         if (service.id != job.get("ingest_service_db_id") or not job.get("pipeline_owning_group_id")
@@ -5151,8 +5191,11 @@ def ingest_public_scan(
                                 and summary.get("status") == "complete" and not summary.get("skipped_images")
                                 and not summary.get("skipped_charts") and not data.get("skipped_images")
                                 and not data.get("skipped_charts"))
+        if topic_job:
+            summary = json.loads((result_path.parent / "scan-summary.json").read_text(encoding="utf-8"))
+            bind_result(data, job, summary)
         data["service"] = {
-            **({"description": service.description} if project_job else data.get("service", {})),
+            **({"description": service.description} if topic_job or project_job else data.get("service", {})),
             "id": service.service_key,
             "name": service.name,
             "version": (
@@ -5204,7 +5247,9 @@ def ingest_public_scan(
         raise HTTPException(status_code=422, detail=detail) from exc
     ingest_stage = "database_ingest"; stage_started = time.perf_counter()
     try:
-        if project_job:
+        if topic_job:
+            response = ingest_payload(payload, db, commit=False, topic_revision_id=topic_revision.id)
+        elif project_job:
             response = ingest_payload(payload, db, commit=False)
         else:
             response = ingest_payload(payload, db) if distribution_job else ingest(payload, db)
@@ -10755,6 +10800,8 @@ def delete_service(
         raise HTTPException(409, detail="This service has retained Cyber approval records. Archive it to preserve its approval history.")
     if confirmation != f"delete {service.name}":
         raise HTTPException(422, detail="Type delete followed by the exact service name to confirm")
+    if db.scalar(select(topic_intake_models.TopicProject.id).where(topic_intake_models.TopicProject.service_id == service.id)):
+        raise HTTPException(409, detail="This service has a GitLab project binding and retained Discovery evidence. Archive it to preserve that history.")
     if db.scalar(select(DurableJob.id).where(DurableJob.service_id == service.id, DurableJob.status.in_(["queued", "running"]))):
         raise HTTPException(409, detail="Wait for active background jobs to finish or cancel queued plans/exports before deletion")
     patch_jobs = db.scalars(select(PatchExecution).where(PatchExecution.service_id == service.id)).all()
@@ -11561,29 +11608,44 @@ def workflow_policy_page(request: Request, group_id: str = "", db: Session = Dep
     ))
 
 
+@app.get("/unclaimed-services", response_class=HTMLResponse)
+def unclaimed_services_page(request: Request, auth: AuthContext = Depends(require_user)):
+    from .topic_intake_claims import may_view_unclaimed
+
+    if not may_view_unclaimed(auth):
+        raise HTTPException(403, detail="Access to the unclaimed service queue is required")
+    return templates.TemplateResponse(request, "unclaimed_services.html", page_context(auth))
+
+
 @app.get("/admin/dependency-watchlist", response_class=HTMLResponse)
-def dependency_watchlist_page(request: Request, db: Session = Depends(get_db), auth: AuthContext = Depends(require_global_config_scope)):
-    entries = db.scalars(select(DependencyWatchlistEntry).order_by(DependencyWatchlistEntry.id)).all()
+def dependency_watchlist_page(request: Request, q: str = "", page: int = 1,
+                             db: Session = Depends(get_db), auth: AuthContext = Depends(require_global_config_scope)):
+    from .remediation_list_queries import page_window
+    from .settings_worker import editable_watchlist_entry, latest_watchlist_refresh
+
+    model = DependencyWatchlistEntry
+    query = q.strip()
+    needle = query.lower()
+    filters = [editable_watchlist_entry()]
+    if needle:
+        filters.append(or_(*(func.lower(column).contains(needle, autoescape=True) for column in
+                             (model.purl, model.name, model.ecosystem, model.version_constraint))))
+    total = db.scalar(select(func.count(model.id)).where(*filters)) or 0
+    page_size = 50
+    page, pages, offset = page_window(total, page, page_size)
+    entries = db.scalars(select(model).where(*filters).order_by(model.id).offset(offset).limit(page_size)).all()
     return templates.TemplateResponse(request, "dependency_watchlist.html", page_context(
-        auth, entries=entries, saved=request.query_params.get("saved") == "1"))
+        auth, entries=entries, entry_page=page, entry_pages=pages, entry_page_size=page_size, entry_total=total,
+        entry_query=query, refresh_job=latest_watchlist_refresh(db), saved=request.query_params.get("saved") == "1"))
 
 
-def _refresh_watchlist_matches(db: Session) -> None:
-    # Re-evaluate persisted SBOM evidence when configuration changes. Old scan
-    # payloads without a component inventory simply produce no matches.
-    entries = db.scalars(select(DependencyWatchlistEntry).where(DependencyWatchlistEntry.enabled.is_(True))).all()
-    cursor = 0
-    while True:
-        executions = db.scalars(select(Execution).where(
-            Execution.id > cursor, Execution.raw_payload.is_not(None),
-        ).order_by(Execution.id).limit(32)).all()
-        if not executions:
-            break
-        for execution in executions:
-            reconcile_watchlist_matches(db, execution, entries=entries)
-        cursor = executions[-1].id
-        # Keep rebuilt matches bounded while preserving the caller's transaction.
-        db.flush()
+@app.get("/api/v1/settings/watchlist-refresh")
+def dependency_watchlist_refresh_status(db: Session = Depends(get_db), auth: AuthContext = Depends(require_global_config_scope)):
+    from .settings_worker import latest_watchlist_refresh
+
+    job = latest_watchlist_refresh(db)
+    revision = json.dumps([job.get(field) for field in ("id", "status", "progress", "stage")]) if job else ""
+    return {"job": job, "revision": revision}
 
 
 @app.post("/admin/dependency-watchlist")
@@ -11593,15 +11655,18 @@ def save_dependency_watchlist(
     version_constraint: str = Form(default=""), enabled: bool = Form(default=False),
     db: Session = Depends(get_db), auth: AuthContext = Depends(require_global_config_scope),
 ):
+    from .models import PendingWatchlistDeletion
+    from .settings_worker import editable_watchlist_entry, queue_watchlist_refresh
     check_csrf(auth, csrf_token)
-    entry = db.get(DependencyWatchlistEntry, entry_id) if entry_id else None
+    entry = db.scalar(select(DependencyWatchlistEntry).where(
+        DependencyWatchlistEntry.id == entry_id, editable_watchlist_entry()).with_for_update(key_share=True)) if entry_id else None
     if entry_id and not entry:
         raise HTTPException(404, detail="Watchlist entry not found")
     if action == "delete":
         if not entry:
             raise HTTPException(404, detail="Watchlist entry not found")
-        db.execute(delete(DependencyWatchlistMatch).where(DependencyWatchlistMatch.entry_id == entry.id))
-        db.delete(entry)
+        entry.enabled = False
+        db.add(PendingWatchlistDeletion(entry_id=entry.id))
         record_audit(db, auth, "watchlist.deleted", "watchlist_entry", entry_id)
     elif action == "save":
         try:
@@ -11622,27 +11687,38 @@ def save_dependency_watchlist(
     else:
         raise HTTPException(422, detail="Unknown watchlist action")
     db.flush()
-    _refresh_watchlist_matches(db)
+    queue_watchlist_refresh(db, auth.user.id)
     db.commit()
     return RedirectResponse("/admin/dependency-watchlist?saved=1", status_code=303)
 
 
+@app.post("/admin/dependency-watchlist/refresh")
+def retry_dependency_watchlist_refresh(csrf_token: str = Form(), db: Session = Depends(get_db),
+                                      auth: AuthContext = Depends(require_global_config_scope)):
+    from .settings_worker import queue_watchlist_refresh
+    check_csrf(auth, csrf_token)
+    job = queue_watchlist_refresh(db, auth.user.id, rules_changed=False)
+    record_audit(db, auth, "watchlist.refresh_requested", "job", job.id)
+    db.commit()
+    return RedirectResponse("/admin/dependency-watchlist", status_code=303)
+
+
 @app.post("/admin/dependency-watchlist/import")
-async def import_dependency_watchlist(
+def import_dependency_watchlist(
     csrf_token: str = Form(), file: UploadFile = File(), db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_global_config_scope),
 ):
+    from .settings_worker import queue_watchlist_refresh
     check_csrf(auth, csrf_token)
     suffix = Path(file.filename or "").suffix.lower().lstrip(".")
-    content = await file.read(1024 * 1024 + 1)
+    content = file.file.read(1024 * 1024 + 1)
     try:
         entries = parse_watchlist_entries(content.decode("utf-8-sig"), suffix)
     except (ValueError, UnicodeError, yaml.YAMLError) as exc:
         raise HTTPException(422, detail=str(exc)) from exc
-    for item in entries:
-        db.add(DependencyWatchlistEntry(**item, enabled=True))
-    db.flush()
-    _refresh_watchlist_matches(db)
+    if entries:
+        db.execute(insert(DependencyWatchlistEntry), [{**item, "enabled": True} for item in entries])
+    queue_watchlist_refresh(db, auth.user.id)
     record_audit(db, auth, "watchlist.imported", "watchlist", "global", count=len(entries), format=suffix)
     db.commit()
     return RedirectResponse("/admin/dependency-watchlist?saved=1", status_code=303)

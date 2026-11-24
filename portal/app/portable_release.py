@@ -9,9 +9,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from io import BytesIO
 import json
-from pathlib import Path
+import os
 import re
-import tempfile
 from urllib.parse import urljoin, urlsplit
 from zipfile import ZipFile, BadZipFile
 
@@ -248,14 +247,12 @@ class _Graph:
 
 
 def _verify_blob(content, signature, public, fingerprint):
-    with tempfile.TemporaryDirectory(prefix='cats-portable-verify-') as temporary:
-        root = Path(temporary)
-        paths = [root / name for name in ('release-manifest.json', 'release-manifest.sig', 'release-public-key.pem')]
-        for path, data in zip(paths, (content, signature, public)):
-            path.write_bytes(data)
-        result = release_signing.verify_release_manifest(*paths, expected_fingerprint=fingerprint)
-        if result.get('status') != 'verified':
-            raise ValueError('Portable release signature verification failed')
+    try:
+        release_signing.verify_release_content(content, signature, public, fingerprint,
+                                              workspace=os.getenv('CATS_POLLING_VERIFY_DIR'))
+    except Exception:
+        # External command output may include registry or host details.
+        raise ValueError('Portable release signature verification failed') from None
 
 
 def _verify_attestation_graph(graph, client, artifact, public, fingerprint):

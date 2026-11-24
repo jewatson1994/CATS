@@ -363,10 +363,14 @@ def provision_oidc_user(db: Session, claims: dict, configuration: dict | None = 
         requested.append(default_role)
     global_roles = [role_by_name[name.lower()] for name in requested if name.lower() in role_by_name]
     groups_by_name = {group.name.lower(): group for group in db.scalars(select(Group))}
+    from .models import TopicIntakeGroup
+    reserved = db.scalar(select(TopicIntakeGroup.group_id).limit(1))
     group_role_map = json.loads(os.getenv("CATS_OIDC_GROUP_ROLE_MAP", "{}"))
     assigned = False
     for group_name in oidc_groups(claims, configuration):
         group = groups_by_name.get(group_name.lower())
+        if group is not None and group.id == reserved:
+            continue
         if not group:
             if os.getenv("CATS_OIDC_AUTO_PROVISION_GROUPS", "false").lower() != "true":
                 continue
@@ -567,14 +571,17 @@ class AuthContext:
 
     @property
     def effective_assignments(self):
-        eligibilities = getattr(self.user, "oidc_eligibilities", [])
+        assignments = self.user.role_assignments
+        # Eligibility mappings govern only CATS-managed OIDC assignments.
+        eligibilities = (getattr(self.user, "oidc_eligibilities", [])
+                         if any(getattr(a, "source", "local") == "cats_scope" for a in assignments) else [])
         eligible_roles = {entry.mapping.role_id for entry in eligibilities
                           if entry.mapping and entry.mapping.enabled and entry.mapping.scope_mode == "cats_managed"}
         fixed_scopes = {(entry.mapping.role_id, entry.mapping.service_id, entry.mapping.group_id)
                         for entry in eligibilities if entry.mapping and entry.mapping.enabled and entry.mapping.scope_mode != "cats_managed"
                         and (entry.mapping.global_scope or entry.mapping.service_id is not None or entry.mapping.group_id is not None)}
         effective = []
-        for assignment in self.user.role_assignments:
+        for assignment in assignments:
             if (getattr(assignment, "source", "local") == "cats_scope" and assignment.role_id not in eligible_roles
                     and (assignment.role_id, assignment.service_id, assignment.group_id) not in fixed_scopes):
                 continue
@@ -590,6 +597,13 @@ class AuthContext:
         from .operating_mode import permission_available
         if not permission_available(permission):
             return False
+        if service_id is not None:
+            db = object_session(self.user) if hasattr(self.user, "_sa_instance_state") else None
+            if db is not None and db.info.get("topic_intake_filtered"):
+                # Scope direct evidence lookups that select a finding or job without a Service join.
+                from .topic_intake_claims import held_for_user_request
+                if held_for_user_request(db, service_id):
+                    return False
         if service_id is not None and permission in SERVICE_EVIDENCE_WRITES:
             from .imported_services import is_imported_service
             db = object_session(self.user) if hasattr(self.user, "_sa_instance_state") else None
@@ -659,9 +673,12 @@ def optional_user(request: Request, db: Session = Depends(get_db)) -> AuthContex
     supplied = request.cookies.get(SESSION_COOKIE, "")
     if not supplied:
         return None
+    from .topic_intake_claims import scope_user_session
+    scope_user_session(db)
     session = db.execute(
         select(UserSession)
-        .where(UserSession.token_hash == token_hash(supplied))
+        .where(UserSession.token_hash == token_hash(supplied),
+               ~select(AccountRetirement.user_id).where(AccountRetirement.user_id == UserSession.user_id).exists())
         .options(
             joinedload(UserSession.user)
             .joinedload(User.role_assignments)
@@ -673,13 +690,15 @@ def optional_user(request: Request, db: Session = Depends(get_db)) -> AuthContex
             .selectinload(Service.groups),
         )
     ).unique().scalar_one_or_none()
-    if not session or aware(session.expires_at) <= utcnow() or not session.user.enabled or db.get(AccountRetirement, session.user_id):
+    if not session or aware(session.expires_at) <= utcnow() or not session.user.enabled:
         return None
     session.last_seen_at = utcnow()
     return AuthContext(session.user, session)
 
 
 def require_user(request: Request, response: Response, db: Session = Depends(get_db)) -> AuthContext:
+    from .topic_intake_claims import scope_user_session
+    scope_user_session(db)
     supplied = request.cookies.get(SESSION_COOKIE, "")
     session = db.scalar(
         select(UserSession)

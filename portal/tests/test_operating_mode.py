@@ -3,8 +3,6 @@ import asyncio
 import os
 import subprocess
 import sys
-import threading
-from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -129,18 +127,11 @@ def test_mode_denies_authoritative_permissions_even_for_existing_roles(monkeypat
 def test_replica_lifespan_skips_intelligence_scanning_and_validation(monkeypatch):
     from app import main, replica_sync
     monkeypatch.setenv('CATS_MODE', 'replica')
-    steps = []
-
-    @asynccontextmanager
-    async def replica():
-        steps.append('start')
-        yield
-        steps.append('stop')
 
     def forbidden(*args, **kwargs):
         pytest.fail('An assessment worker or intelligence installer started in replica mode')
 
-    monkeypatch.setattr(replica_sync, 'replica_lifespan', replica)
+    monkeypatch.setattr(replica_sync, 'schedule_due', forbidden)
     monkeypatch.setattr(main.validator_management, 'recover_operations', forbidden)
     monkeypatch.setattr(main, '_start_read_model_maintenance', forbidden)
     monkeypatch.setattr(main.DEPLOYMENT_VALIDATION_WORKERS, 'submit', forbidden)
@@ -150,9 +141,8 @@ def test_replica_lifespan_skips_intelligence_scanning_and_validation(monkeypatch
 
     async def run():
         async with main.app_lifespan(main.app):
-            assert steps == ['start']
+            pass
     asyncio.run(run())
-    assert steps == ['start', 'stop']
 
 
 @pytest.mark.parametrize('operating_mode,blocked', [('replica', True), ('full', True), ('full', False)])
@@ -184,8 +174,8 @@ def test_portal_import_only_requires_assessment_storage_in_full_mode(tmp_path, o
 
 
 @pytest.mark.parametrize('compose_path,expected_services', [
-    ('templates/compose.replica.external-ingress.yaml', {'db', 'portal', 'oci-proxy'}),
-    ('templates/compose.replica.yaml', {'db', 'portal', 'oci-proxy', 'nginx'}),
+    ('templates/compose.replica.external-ingress.yaml', {'db', 'portal', 'oci-proxy', 'polling-worker'}),
+    ('templates/compose.replica.yaml', {'db', 'portal', 'oci-proxy', 'polling-worker', 'nginx'}),
 ])
 def test_replica_compose_has_no_assessment_infrastructure(compose_path, expected_services):
     root = Path(__file__).resolve().parents[2]
@@ -201,36 +191,15 @@ def test_replica_compose_has_no_assessment_infrastructure(compose_path, expected
     assert set(compose['services']['portal']['depends_on']) == {'db'}
 
 
-def test_initial_replica_synchronization_does_not_block_portal(monkeypatch):
-    from app import replica_sync
+def test_replica_polling_worker_runs_only_sync_jobs(monkeypatch):
+    from app import polling_worker, replica_sync
+    monkeypatch.setenv('CATS_MODE', 'replica')
     monkeypatch.setenv('CATS_REPLICA_SYNC_ENABLED', 'true')
-    started, finish, completed = threading.Event(), threading.Event(), threading.Event()
-
-    def slow_initial_sync():
-        started.set()
-        finish.wait(5)
-        completed.set()
-
-    monkeypatch.setattr(replica_sync, 'schedule_due', slow_initial_sync)
-    monkeypatch.setattr(replica_sync.jobs, 'claim', lambda *args: None)
-
-    @asynccontextmanager
-    async def lifespan(_app):
-        async with replica_sync.replica_lifespan():
-            yield
-
-    app = FastAPI(lifespan=lifespan)
-
-    @app.get('/health')
-    def health():
-        return {'status': 'ok'}
-
-    with TestClient(app) as client:
-        try:
-            assert started.wait(2)
-            assert not completed.is_set()
-            assert client.get('/health').json() == {'status': 'ok'}
-            assert not completed.is_set()
-        finally:
-            finish.set()
-    assert completed.is_set()
+    worker = {}
+    def observe(kinds, handler, **settings):
+        worker.update(kinds=kinds, handler=handler, **settings)
+    monkeypatch.setattr(polling_worker.durable_jobs, 'run_worker', observe)
+    polling_worker.main()
+    assert worker['kinds'] == (replica_sync.KIND,)
+    assert worker['handler'] == replica_sync.sync
+    assert worker['maintenance'] == replica_sync.schedule_due

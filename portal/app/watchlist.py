@@ -5,6 +5,8 @@ from __future__ import annotations
 import csv
 import io
 import re
+from collections import defaultdict
+from itertools import chain
 
 import yaml
 
@@ -108,30 +110,98 @@ def syft_components(sbom: dict, image: str) -> list[dict]:
     return result
 
 
-def reconcile_matches(db, execution, *, entries=None) -> int:
-    """Rebuild warning evidence for one immutable scan; never create findings."""
-    from sqlalchemy import delete, select
-    from .models import DependencyWatchlistEntry, DependencyWatchlistMatch
+def index_entries(entries):
+    """Group rules by their required identity before traversing any SBOMs."""
+    by_purl = defaultdict(list)
+    by_name = defaultdict(list)
+    for entry in entries:
+        purl = (entry.purl or "").partition("?")[0]
+        if purl:
+            by_purl[purl].append(entry)
+        else:
+            by_name[normalized(entry.name)].append(entry)
+    return by_purl, by_name
 
-    db.execute(delete(DependencyWatchlistMatch).where(DependencyWatchlistMatch.execution_id == execution.id))
-    if entries is None:
-        entries = db.scalars(select(DependencyWatchlistEntry).where(DependencyWatchlistEntry.enabled.is_(True))).all()
-    components = (execution.raw_payload or {}).get("sbom_components") or []
-    seen = set()
-    count = 0
-    for component in components:
+
+def match_rows(components, indexed_entries, execution_id, service_id):
+    by_purl, by_name = indexed_entries
+    rows = {}
+    if not (by_purl or by_name):
+        return rows
+    for component in components or ():
         if not isinstance(component, dict):
             continue
-        for entry in entries:
+        full_purl = component.get("purl") or ""
+        purl = full_purl.partition("?")[0]
+        base_purl, separator, _ = purl.partition("@")
+        name = component.get("name") or ""
+        version = component.get("version") or ""
+        image = component.get("image") or ""
+        ecosystem = component.get("ecosystem") or ""
+        candidates = chain(by_name.get(normalized(name), ()), by_purl.get(purl, ()),
+                           by_purl.get(base_purl, ()) if separator else ())
+        for entry in candidates:
+            # Keep the canonical predicate, including the PURL and ecosystem
+            # precedence used by existing rules and imported SBOMs.
             if not component_matches(entry.__dict__, component):
                 continue
-            identity = (entry.id, component.get("purl"), component.get("name"), component.get("version"), component.get("image"))
-            if identity in seen:
-                continue
-            seen.add(identity)
-            db.add(DependencyWatchlistMatch(entry_id=entry.id, execution_id=execution.id,
-                service_id=execution.service_id, component_name=component.get("name") or "",
-                component_version=component.get("version") or "", component_purl=component.get("purl") or "",
-                ecosystem=component.get("ecosystem") or "", image=component.get("image") or ""))
-            count += 1
-    return count
+            identity = (entry.id, full_purl, name, version, image)
+            if identity not in rows:
+                rows[identity] = dict(entry_id=entry.id, execution_id=execution_id, service_id=service_id,
+                                      component_purl=full_purl, component_name=name, component_version=version,
+                                      image=image, ecosystem=ecosystem)
+    return rows
+
+
+def publish_matches(db, execution_id, service_id, rows):
+    """Commit match changes and their two cache invalidations in the caller's transaction."""
+    from sqlalchemy import bindparam, delete, insert, select, update
+    from .models import DependencyProjection, DependencyWatchlistMatch as Match
+    from .service_posture import invalidate_services
+
+    existing = db.execute(select(Match.id, Match.entry_id, Match.component_purl, Match.component_name,
+                                 Match.component_version, Match.image, Match.ecosystem)
+                          .where(Match.execution_id == execution_id, Match.service_id == service_id))
+    retained = set()
+    removed = []
+    changed = []
+    for match in existing:
+        key = (match.entry_id, match.component_purl, match.component_name, match.component_version, match.image)
+        if key not in rows:
+            removed.append(match.id)
+        else:
+            retained.add(key)
+            if match.ecosystem != rows[key]["ecosystem"]:
+                changed.append({"match_id": match.id, "new_ecosystem": rows[key]["ecosystem"]})
+    added = [row for key, row in rows.items() if key not in retained]
+    if not (added or removed or changed):
+        return len(rows)
+
+    # The general ORM bulk-write hooks conservatively invalidate *all* dependency
+    # projections. Here every row belongs to one known execution and service.
+    connection = db.connection()
+    table = Match.__table__
+    for i in range(0, len(removed), 500):
+        connection.execute(delete(table).where(table.c.id.in_(removed[i:i+500])))
+    for i in range(0, len(changed), 500):
+        connection.execute(update(table).where(table.c.id == bindparam("match_id"))
+                           .values(ecosystem=bindparam("new_ecosystem")), changed[i:i+500])
+    for i in range(0, len(added), 500):
+        connection.execute(insert(table), added[i:i+500])
+    connection.execute(delete(DependencyProjection.__table__).where(DependencyProjection.execution_id == execution_id))
+    invalidate_services(connection, [service_id])
+    return len(rows)
+
+
+def reconcile_matches(db, execution, *, entries=None) -> int:
+    """Reconcile warning evidence for one immutable scan in the caller's transaction."""
+    from sqlalchemy import select
+    from .models import DependencyWatchlistEntry
+    from .settings_worker import editable_watchlist_entry
+
+    if entries is None:
+        entries = db.scalars(select(DependencyWatchlistEntry).where(
+            DependencyWatchlistEntry.enabled.is_(True), editable_watchlist_entry()))
+    rows = match_rows((execution.raw_payload or {}).get("sbom_components"), index_entries(entries),
+                      execution.id, execution.service_id)
+    return publish_matches(db, execution.id, execution.service_id, rows)

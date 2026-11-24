@@ -35,7 +35,7 @@ OWNER = "cats-real-nginx-acceptance-v1"
 SELECTED_SERVICES = (
     "db", "intelligence-db", "intelligence-init", "patch-worker", "portal",
     "portal-control", "scan-worker", "discovery-worker", "remediation-worker",
-    "export-worker",
+    "export-worker", "polling-worker",
 )
 PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{2,62}$")
 VOLUME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")
@@ -158,6 +158,22 @@ if not (root/'signer.json').exists():
 '''
 
 
+def replica_polling_service(portal: dict) -> dict:
+    """Use the replica's trust, writable evidence, and network in the polling process."""
+    service = {key: copy.deepcopy(portal[key]) for key in (
+        "image", "entrypoint", "environment", "volumes", "cap_drop", "security_opt", "restart", "networks"
+    ) if key in portal}
+    for key in ("CATS_BOOTSTRAP_USERNAME", "CATS_BOOTSTRAP_PASSWORD"):
+        service["environment"].pop(key, None)
+    service["environment"]["CATS_POLLING_VERIFY_DIR"] = "/var/cache/cats-polling/verify"
+    service["volumes"].append("/var/cache/cats-polling")
+    service.update(command=["python", "-m", "app.polling_worker"],
+                   read_only=True, tmpfs=["/tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777"],
+                   depends_on={"replica-portal": {"condition": "service_healthy"}},
+                   healthcheck={"disable": True})
+    return service
+
+
 def composition(canonical: dict, args, values: dict) -> dict:
     workspace, project = args.workspace, args.project
     result = {"name": project, "services": {}, "volumes": {},
@@ -179,7 +195,7 @@ def composition(canonical: dict, args, values: dict) -> dict:
         service.setdefault("environment", {}).update(trust)
         service.setdefault("volumes", []).extend(public_trust_mounts(workspace))
         for volume in service["volumes"]:
-            if volume.get("type") == "volume":
+            if volume.get("type") == "volume" and volume.get("source"):
                 source = volume["source"]
                 result["volumes"][source] = {"name": f"{project}_{source}"}
         for dependency in service.get("depends_on", {}):
@@ -266,6 +282,7 @@ def composition(canonical: dict, args, values: dict) -> dict:
             "cap_drop": ["ALL"], "security_opt": ["no-new-privileges:true"], "restart": "no",
         }
     result["services"]["replica-proxy"]["depends_on"]["replica-portal"] = {"condition": "service_healthy"}
+    result["services"]["replica-polling-worker"] = replica_polling_service(result["services"]["replica-portal"])
     for name in ("replica_db", "replica_evidence", "replica_cache", "patch_docker_data", "patch_docker_socket"):
         result["volumes"][name] = {"name": f"{project}_{name}"}
     return result
@@ -440,7 +457,7 @@ def main(argv=None) -> int:
         print(json.dumps({"action": "plan-only", "project": args.project, "workspace": str(args.workspace),
             "repo": str(args.repo), "full_image": args.full_image, "replica_image": args.replica_image,
             "services": [*SELECTED_SERVICES, "patch-daemon", "publisher-registry", "replica-registry",
-                         "replica-db", "replica-portal", "replica-proxy"],
+                         "replica-db", "replica-portal", "replica-proxy", "replica-polling-worker"],
             "ports": {"full": args.full_port, "replica": args.replica_port, "proxy": args.proxy_port},
             "next": "Add --provision; add --build only when the full runtime image must be built."}))
     return 0

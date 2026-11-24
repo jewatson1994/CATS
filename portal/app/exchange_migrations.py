@@ -1,7 +1,9 @@
 """Additive exchange migration, safe for existing SQLite/PostgreSQL installs."""
 from contextlib import contextmanager
 import logging
+import os
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import OperationalError
 from .schema_migrations import create_index_if_missing
 
 
@@ -11,6 +13,18 @@ def migration_transaction(engine):
     with engine.connect() as connection:
         try:
             if connection.dialect.name == "sqlite":
+                # Make file-backed local development databases reader-friendly
+                # when requested. WAL persists in the file and must be selected
+                # before opening the schema migration's transaction.
+                if (os.getenv("CATS_SQLITE_WAL", "").lower() in {"1", "true", "yes", "on"}
+                        and engine.url.database not in {None, "", ":memory:", "file::memory:"}
+                        and engine.url.query.get("mode") not in {"memory", "ro"}):
+                    try:
+                        mode = connection.exec_driver_sql("PRAGMA journal_mode=WAL").scalar()
+                        if mode != "wal":
+                            logging.getLogger(__name__).warning("SQLite kept its existing journal mode")
+                    except OperationalError:
+                        logging.getLogger(__name__).warning("Could not enable SQLite WAL at startup")
                 # Explicit BEGIN also makes SQLite DDL transactional.
                 connection.exec_driver_sql("BEGIN IMMEDIATE")
             else:

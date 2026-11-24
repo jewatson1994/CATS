@@ -18,18 +18,10 @@ def finish(coroutine):
         coroutine.send(None)
 
 
-def test_full_lifespan_runs_oci_consumer_alongside_normal_workers(monkeypatch):
+def test_full_lifespan_leaves_oci_polling_to_dedicated_worker(monkeypatch):
     monkeypatch.setenv('CATS_MODE', 'full')
     monkeypatch.setenv('INTELLIGENCE_DATABASE_URL', 'sqlite://')
     events, tasks = [], []
-
-    @asynccontextmanager
-    async def consumer():
-        events.append('oci-enter')
-        try:
-            yield
-        finally:
-            events.append('oci-exit')
 
     @asynccontextmanager
     async def previews(_session):
@@ -55,17 +47,17 @@ def test_full_lifespan_runs_oci_consumer_alongside_normal_workers(monkeypatch):
         return task
 
     monkeypatch.setattr(main.asyncio, 'create_task', spawn)
-    monkeypatch.setattr(replica_sync, 'replica_lifespan', consumer)
+    monkeypatch.setattr(replica_sync, 'schedule_due', lambda: pytest.fail('Portal started OCI polling'))
     monkeypatch.setattr(main, 'preview_cleanup_lifespan', previews)
     monkeypatch.setattr(main.validator_management, 'recover_operations', lambda: events.append('recover'))
     monkeypatch.setattr(main, 'DEPLOYMENT_VALIDATION_WORKERS', SimpleNamespace(submit=lambda fn: events.append('validation')))
     monkeypatch.setattr(main, '_start_read_model_maintenance', lambda: events.append('read-models'))
     context = main.app_lifespan(None)
     finish(context.__aenter__())
-    assert events == ['recover', 'validation', 'read-models', 'previews-enter', 'oci-enter']
+    assert events == ['recover', 'validation', 'read-models', 'previews-enter']
     assert len(tasks) == 2
     finish(context.__aexit__(None, None, None))
-    assert events[-2:] == ['oci-exit', 'previews-exit']
+    assert events[-1] == 'previews-exit'
     assert all(task.cancelled for task in tasks)
 
 

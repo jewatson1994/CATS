@@ -22,11 +22,10 @@ only for its own computation). A stored row is current only if all hold:
     expiry, POA&M due dates, oldest-finding age in days);
   * the algorithm version matches.
 
-Readers recompute stale or missing rows for just those services, in one
-set-based batch, before serving. Beyond a bound (a portfolio-wide event such
-as a catalog refresh), existing rows are served as stale and refreshed in the
-background; missing rows are always computed. Security-sensitive actions
-never read this model.
+When background jobs are running, readers queue stale or missing rows for
+refresh. An idle portal can rebuild small batches inline. A queued row is
+marked refreshing or preparing until it becomes current. Security-sensitive
+actions never read this model.
 """
 from __future__ import annotations
 
@@ -92,7 +91,7 @@ def _chunks(values, size=500):
         yield values[start:start + size]
 
 
-def _bump(connection, service_ids):
+def invalidate_services(connection, service_ids):
     """Invalidate posture rows in the caller's transaction."""
     ids = sorted({int(value) for value in service_ids if value is not None})
     for chunk in _chunks(ids):
@@ -156,7 +155,7 @@ def _mark_changed_services(session, _context):
         service_ids.update(connection.execute(select(PolicyFinding.service_id).where(member_of(PolicyFinding.id, chunk, numeric=True))).scalars())
     for chunk in _chunks(execution_ids):
         service_ids.update(connection.execute(select(Execution.service_id).where(member_of(Execution.id, chunk, numeric=True))).scalars())
-    _bump(connection, service_ids - new_services - deleted_services)
+    invalidate_services(connection, service_ids - new_services - deleted_services)
     for service_id in new_services:
         # A row exists from creation onward, so no later write can miss it.
         # SQLite can reuse a deleted service's id: replace any leftover row
@@ -255,7 +254,7 @@ def _publish_bulk_services(session):
         for chunk in _chunks(values):
             service_ids.update(connection.execute(select(owner.service_id).where(
                 member_of(owner.id, chunk, numeric=True))).scalars())
-    _bump(connection, service_ids)
+    invalidate_services(connection, service_ids)
 
 
 @event.listens_for(Session, "before_commit")
@@ -561,9 +560,9 @@ def schedule(bind, service_ids, kinds=KINDS):
         return None
     from .database import background_bind
     bind = background_bind(getattr(bind, "engine", bind))
-    from .imported_services import imported_service_ids
-    with Session(bind=bind) as db:
-        service_ids = set(service_ids) - imported_service_ids(db, service_ids)
+    # rebuild() filters imported services using its own session. Scheduling
+    # from a GET must never wait for a connection in the background pool.
+    service_ids = set(service_ids)
     with _queue_lock:
         fresh = {(bind, kind, sid) for kind in kinds for sid in service_ids} - _queued
         if not fresh:
@@ -643,19 +642,20 @@ def _load(db, kind, service_ids, configurations, now):
 def _load_available(db, kind, service_ids, configurations, now):
     rows = _read(db, kind, service_ids)
     stale, missing = _classify(db, rows, service_ids, configurations, now)
-    if stale or missing:
-        _refresh_log("freshness_rejected", kind, len(stale) + len(missing))
+    synchronous, deferred = missing + stale, []
     background = background_enabled(db.get_bind())
-    limit = sync_limit()
-    # Above the synchronous threshold, queue all invalid projections instead
-    # of delaying the request with a partial inline rebuild. Unprepared rows
-    # remain explicitly pending. In-memory SQLite rebuilds inline.
-    if background and len(missing) + len(stale) > limit:
-        synchronous = []
-        deferred = missing + stale
-        schedule(db.get_bind(), deferred, kinds=(kind,))
-    else:
-        synchronous, deferred = missing + stale, []
+    if synchronous:
+        _refresh_log("freshness_rejected", kind, len(synchronous))
+        # Only invalid projections need this indexed lookup. During a job,
+        # readers use the existing pending/refreshing view without competing
+        # for the database writes or CPU required by a synchronous rebuild.
+        from .durable_jobs import DurableJob
+        from .scan_coordination import ScanJob
+        running_job = select(DurableJob.id).where(DurableJob.status == "running").exists()
+        active_scan = select(ScanJob.id).where(ScanJob.status.in_(("claimed", "running", "evidence_ready"))).exists()
+        if background and (len(synchronous) > sync_limit() or db.scalar(select(running_job | active_scan))):
+            synchronous, deferred = [], synchronous
+            schedule(db.get_bind(), deferred, kinds=(kind,))
     if synchronous:
         for chunk in _chunks(synchronous, 250):
             rebuild(db.get_bind(), kind, chunk, now=now)

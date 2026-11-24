@@ -30,13 +30,51 @@ GitLab imports are disabled until an administrator sets `CATS_DISCOVERY_GITLAB_S
 CATS_DISCOVERY_GITLAB_SOURCES=https://gitlab.com/gitlab-org/charts/gitlab,https://gitlab.example.com
 ```
 
-Recreate the public portal after editing the setting. For the local stack run `docker compose --project-directory . --env-file .env -f templates/compose.local.yaml up -d --no-deps --force-recreate portal`. For the main deployment template run `docker compose --env-file /secure/cats.env -f templates/compose.main.yaml up -d --no-deps --force-recreate portal`. The portal needs direct HTTPS access to the GitLab API. For private Helm dependencies found inside the snapshot, the Discovery worker uses its existing approved sources, scoped OCI registry credentials and configured chart mirrors.
-
-The portal uses system trust and certificates saved under **Administration → Trusted CA certificates**. For an internal GitLab instance, upload the issuing CA's public PEM certificate there. Alternatively, to supply the CA through Compose, set `CATS_DISCOVERY_GITLAB_CA_FILE` to the absolute host path of the PEM CA bundle. Include the supplied override when creating the portal and on subsequent Compose updates. It mounts the file read-only into the portal. For the main deployment template, substitute `--env-file /secure/cats.env -f templates/compose.main.yaml` for `--project-directory . --env-file .env -f templates/compose.local.yaml`.
+Recreate the full portal and its GitLab workers after changing the allowlist. The local stack uses the following command. For the main HTTPS stack, substitute `--env-file /secure/cats.env -f templates/compose.main.yaml` for `--project-directory . --env-file .env -f templates/compose.local.yaml`.
 
 ```sh
-docker compose --project-directory . --env-file .env -f templates/compose.local.yaml -f deploy/compose.discovery-gitlab-ca.yaml up -d --no-deps --force-recreate portal
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml up -d --wait portal polling-worker discovery-worker
 ```
+
+GitLab clients use system trust and certificates saved under **Administration → Trusted CA certificates**. For file-based trust, set `CATS_DISCOVERY_GITLAB_CA_FILE` to the absolute host path of the public PEM CA bundle and include the overlay below on each Compose update. It mounts the certificate read-only in all three containers. The Discovery worker, which runs as UID 10003, must be able to read the file.
+
+```sh
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml -f deploy/compose.discovery-gitlab-ca.yaml up -d --wait portal polling-worker discovery-worker
+```
+
+### Poll projects by GitLab topic
+
+A full CATS deployment can discover and scan the current default-branch commit of each matching project, including projects in subgroups. A publisher can add a GitLab project topic once and push subsequent revisions using its own script or CI pipeline. Repeated polls of the same project ID and commit SHA reuse the existing intake record.
+
+1. On the full CATS host, add the exact GitLab HTTPS **origin** (for example `https://gitlab.example.com`) to `CATS_DISCOVERY_GITLAB_SOURCES`. A project-only allowlist entry works for a manual import. Topic polling needs origin approval to list projects under a GitLab namespace. Apply the Compose configuration above.
+2. Using an account with global configuration permission, open **Administration → GitLab topic polling** at `/admin/topic-polling`. Enter a source name, the approved origin, and an exact GitLab project topic such as `cats-scan`. Choose a group search to include a single GitLab group and its subgroups, with one CATS claim group. Choose an instance search for independent group trees. For example, map GitLab namespace `platform/services` to the Platform claim group and `mission/apps` to Mission. Both can use the same topic. Only projects under a configured namespace qualify for intake.
+3. Supply a read-only GitLab token with `read_api` access to the target projects if private repositories are involved. CATS encrypts the credential with `CATS_CONFIG_ENCRYPTION_KEY`. Save the source and choose **Preview matches** to check the project paths, default branches and claim destinations using the polling worker. A preview works with automatic polling disabled. It reads GitLab metadata without creating services, downloading repository archives or queuing scans. When the matches look right, enable the source and choose **Poll now** or wait for the configured interval (default 300 seconds).
+4. In GitLab, apply the configured topic to a project in that namespace. The default branch should contain the deployment manifests or charts that identify its runnable images. Publish the referenced images to a registry reachable by the CATS scan worker. For private images, configure the scan worker's registry access as described below. The publisher or custom script controls what it writes to GitLab and the registry. CATS reads the repository archive and inspects the declared configuration.
+5. In **Administration → GitLab topic polling**, open the source's **Projects** view to follow each commit through Discovery, Scan and evidence ingestion. The polling worker downloads the selected commit into encrypted Discovery storage. The Discovery worker renders it, and a complete inventory with eligible images can enter the scan queue.
+6. Once CATS has ingested complete scan evidence for the project's latest revision, authorized members of the target group can see and claim the service under **Unclaimed Services** at `/unclaimed-services`. If a newer commit arrives before the claim, the project leaves that queue while the new revision is processed. The admin **Projects** view continues to show the revision and its status. Later observed commits remain attached to the same GitLab project and service.
+
+A successful poll removes a project from consideration if it loses the topic, moves outside the configured namespace, or is archived in GitLab. CATS retains its evidence and any existing owner. A partial poll can hold a project when it finds a routing conflict. It only withdraws projects for absence after the entire search succeeds. If the account that authorized a source loses global configuration access, another global configuration administrator can open **Edit source** and save it to resume polling under their authorization.
+
+The latest preview and latest poll have separate results. Open the match details to see each sampled project's branch, commit, claim group and outcome. Totals cover the whole run. For an instance search, the excluded count can identify topic matches outside your namespace mappings without listing those projects.
+
+If rules assign different claim groups to one project, CATS holds intake until the routes agree. Edit the instance mappings or disable the competing rule, then poll the intended source. If the result says **Already tracked by** another source, that named source owns the binding and must be enabled to pick up future revisions. Each GitLab project keeps one service and its scan history.
+
+The scanner's `CATS_PUBLIC_MAX_IMAGES` setting defaults to 50 distinct images per scan. If a project exceeds this limit, set the intended limit for the full deployment, recreate the portal and polling worker, and retry the revision from **Projects**.
+
+**Private image registries.** Topic image scans pull anonymously by default. To allow a private pull, place a read-only pull credential in the scan worker's existing registry-auth mount (`CATS_SCAN_REGISTRY_AUTH_SOURCE`). Set `CATS_TOPIC_SCAN_REGISTRY_PREFIXES` in the full deployment environment to explicit registry/repository paths, such as `registry.example.com/team-a,registry.internal:5000/platform/payments`, then recreate `scan-worker`. Each prefix covers that exact repository and its descendants. A credential scoped at the registry to those same repositories limits what the account can read.
+
+Docker associates credentials with a registry host. CATS only supplies a host's credential when **every** image from that host in the verified topic scan belongs to an allowed repository. For example, a job containing both `registry.example.com/team-a/api` and `registry.example.com/team-b/db` uses anonymous pulls for that registry if only `team-a` is allowed. Other eligible hosts are evaluated independently. The GitLab read token is used only for the GitLab source. [Scan worker registry configuration](dedicated-scan-worker.md)
+
+The full polling worker has separate processing slots for GitLab intake and signed OCI synchronization. With multiple polling workers, CATS runs one intake poll at a time per GitLab origin so overlapping sources see project changes in order. A free worker can still run a preview or poll another origin. `CATS_REPLICA_SYNC_ENABLED` controls the OCI slot. GitLab sources each have an **Enable automatic polling** setting. Replica deployments run the OCI slot only.
+
+| Symptom | Check |
+| --- | --- |
+| A project never appears | Preview the saved source. Check the exact project topic, namespace mapping and GitLab token access. For a routing conflict, inspect the matching sources and their claim groups. If the project matches, open **Projects** to see whether deployment discovery or scanning needs attention. A commit pushed only to another branch does not change the polled branch tip. |
+| GitLab TLS or permission errors | Verify the CA from the polling worker's perspective and the read token's access to the project and its archive. The public CA override requires the overlay when the stack is recreated. |
+| A revision is waiting for Discovery or Scan | Open **GitLab topic polling → Projects** for the source and check the latest revision. Check `polling-worker`, `discovery-worker`, `portal-control`, and `scan-worker` and their job statuses. Durable Discovery/intake and scan queues use `CATS_JOB_QUEUE_CAPACITY` and `CATS_SCAN_QUEUE_CAPACITY`. Preserve `discovery_uploads` and `public_jobs` on upgrades. |
+| Discovery is incomplete or the scan cannot pull an image | Inspect the revision error and Discovery diagnostics. Supply missing chart dependencies, correct the deployment image references, or configure registry trust and pull access. After repairing a transient failure, retry the failed revision from the source's **Projects** view. A changed deployment is picked up at the next default-branch commit. |
+| A project is missing from Unclaimed Services | In **GitLab topic polling → Projects**, check the latest revision for pending or failed processing. Confirm that its scan has complete, ingested evidence, that the service is still unclaimed and that the user may manage services in its configured claim group. |
+
 
 ## Helm charts declared in values.yaml
 

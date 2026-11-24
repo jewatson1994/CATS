@@ -27,11 +27,13 @@ function Dashboard({data, error, retry}: {data: any; error?: string; retry: () =
   const noAssessed = preparing > 0 && (data.posture_assessed === 0 || legacyPending);
   return <>
     <PageHeader eyebrow="Production service cyber hygiene" title={labels.title} description={labels.description}
-      actions={<><span className="stamp">As of {data.now_display}</span><LifecycleTabs data={data}/>{canStage && <button type="button" className="secondary-button" onClick={() => dialog.current?.showModal()}>Stage Service</button>}</>}/>
+      actions={<><span className="stamp">As of {data.now_display}</span><LifecycleTabs data={data}/>
+        {!replica && lifecycle === 'active' && data.may_view_unclaimed && <a className="secondary-button" href="/unclaimed-services">Unclaimed Services</a>}
+        {canStage && <button type="button" className="secondary-button" onClick={() => dialog.current?.showModal()}>Stage Service</button>}</>}/>
     {error && <div className="page-refresh-notice" role="alert"><p>Unable to refresh the dashboard. {error}</p>
       <button type="button" className="secondary-button" onClick={retry}>Retry dashboard</button></div>}
     {preparing > 0 ? <p className="page-refresh-notice" role="status">Posture is being prepared for {preparing} {preparing === 1 ? 'service' : 'services'}. Compliance and POA&amp;M totals include services with available posture.{data.dashboard_url && !error && ' This page refreshes automatically.'}</p>
-      : data.posture_refreshing && <p className="page-refresh-notice" role="status">Service posture is being refreshed after a portfolio-wide change; some rows may briefly show their previous values.</p>}
+      : data.posture_refreshing && <p className="page-refresh-notice" role="status">Service posture is refreshing. Some rows may still show earlier results.</p>}
     {replica && <p role="note">These assessment results were captured by the publishing system. Release expiration, revocation and local Cyber overrides are evaluated separately. <a href="/approved-releases">Review current OCI enforcement and release history</a>.</p>}
     <MetricGrid label="Service summary" className="metric-grid-compact">
       <MetricCard label="Services" value={data.lifecycle_counts?.[lifecycle] ?? (legacyPending ? 'Pending' : data.total_count ?? 0)}/>

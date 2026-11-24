@@ -41,6 +41,41 @@ def test_every_action_worker_has_setup_policy_and_runtime_probe(path):
                 assert "mode=1777" in mount
 
 
+@pytest.mark.parametrize("path", ["templates/compose.local.yaml", "templates/compose.main.yaml",
+                                  "templates/compose.replica.yaml", "templates/compose.replica.external-ingress.yaml"])
+def test_portal_workers_have_independent_budgets_and_only_required_storage(path):
+    services = yaml.safe_load((ROOT / path).read_text(encoding="utf-8"))["services"]
+    replica = "replica" in path
+    expected = {"polling-worker": ["replica_evidence:/var/lib/cats", "/var/cache/cats-polling"] if replica else [
+        "remediation_jobs:/tmp/cats-remediation-jobs", "discovery_uploads:/data/discovery-uploads",
+        "public_jobs:/tmp/cats-public-jobs", "/var/cache/cats-polling"
+    ]}
+    if replica:
+        assert "settings-worker" not in services
+    else:
+        expected["settings-worker"] = []
+    for name, volumes in expected.items():
+        worker = services[name]
+        assert worker["command"] == ["python", "-m", "app." + name.replace("-", "_")]
+        assert worker["cpu_shares"] < services["portal"]["cpu_shares"]
+        assert worker["cpus"] and worker["mem_limit"] and worker["pids_limit"]
+        assert worker["read_only"] and worker["cap_drop"] == ["ALL"]
+        assert worker["depends_on"]["portal"]["condition"] == "service_healthy"
+        assert not worker.get("ports") and worker["volumes"] == volumes
+        env = worker["environment"]
+        assert not {"CATS_BOOTSTRAP_PASSWORD", "PIPELINE_API_TOKEN", "CATS_SCAN_WORKER_TOKEN"} & env.keys()
+        if name == "polling-worker":
+            path = "/var/lib/cats/replica" if replica else "/tmp/cats-remediation-jobs/approved-releases/replica"
+            assert env["CATS_REPLICA_STORAGE"] == path
+            assert worker["tmpfs"] == ["/tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777"]
+            assert env["CATS_POLLING_VERIFY_DIR"] == "/var/cache/cats-polling/verify"
+            assert env["CATS_REPLICA_SYNC_ENABLED"] == "${CATS_REPLICA_SYNC_ENABLED:-true}"
+        for pool in ("CATS_DB", "CATS_DB_BACKGROUND"):
+            size = 4 if name == "polling-worker" and not replica and pool == "CATS_DB_BACKGROUND" else 2
+            assert env[pool + "_POOL_SIZE"] == size
+            assert env[pool + "_MAX_OVERFLOW"] == 0
+
+
 def test_apparmor_overlay_is_scoped_and_preserves_seccomp():
     overlay = yaml.safe_load((ROOT / "deploy/compose.worker-apparmor.yaml").read_text())
     assert set(overlay["services"]) == set(WORKERS)

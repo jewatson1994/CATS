@@ -1,4 +1,5 @@
 """Mixed local and imported OCI authority in the full CATS application."""
+import asyncio
 from datetime import timedelta
 import json
 from types import SimpleNamespace
@@ -172,17 +173,6 @@ def test_full_mode_source_administration_retains_permission_boundaries(full_impo
         assert replica_routes.releases(auth=admin, db=db)['releases'] == []
 
 
-def immediate(coroutine):
-    """Drive request handlers whose in-memory request body performs no external IO."""
-    try:
-        coroutine.send(None)
-    except StopIteration as finished:
-        return finished.value
-    finally:
-        coroutine.close()
-    raise AssertionError('Handler unexpectedly suspended on external IO')
-
-
 def json_request(payload, csrf=None):
     async def receive():
         return {'type': 'http.request', 'body': json.dumps(payload).encode(), 'more_body': False}
@@ -200,18 +190,18 @@ def test_full_mode_source_mutations_retain_csrf_and_idempotent_sync(full_importe
         trusted_publishers=['sha256:' + 'a' * 64])
     with f.sessions() as db:
         with pytest.raises(HTTPException) as missing_csrf:
-            immediate(replica_routes.create_source(json_request(payload), admin, db))
+            asyncio.run(replica_routes.create_source(json_request(payload), admin, db))
         assert missing_csrf.value.status_code == 403
-        created = immediate(replica_routes.create_source(json_request(payload, 'token'), admin, db))
+        created = asyncio.run(replica_routes.create_source(json_request(payload, 'token'), admin, db))
         with pytest.raises(HTTPException) as missing_permission:
-            immediate(replica_routes.synchronize(json_request({}, 'token'), admin, db))
+            asyncio.run(replica_routes.synchronize(json_request({}, 'token'), admin, db))
         assert missing_permission.value.status_code == 403
         for csrf in (None, 'wrong'):
             with pytest.raises(HTTPException) as denied:
-                immediate(replica_routes.synchronize(json_request({'source_id': created['id']}, csrf), syncer, db))
+                asyncio.run(replica_routes.synchronize(json_request({'source_id': created['id']}, csrf), syncer, db))
             assert denied.value.status_code == 403
-        first = immediate(replica_routes.synchronize(json_request({'source_id': created['id']}, 'token'), syncer, db))
-        repeated = immediate(replica_routes.synchronize(json_request({'source_id': created['id']}, 'token'), syncer, db))
+        first = asyncio.run(replica_routes.synchronize(json_request({'source_id': created['id']}, 'token'), syncer, db))
+        repeated = asyncio.run(replica_routes.synchronize(json_request({'source_id': created['id']}, 'token'), syncer, db))
         assert first['jobs'][0]['id'] == repeated['jobs'][0]['id']
 
 

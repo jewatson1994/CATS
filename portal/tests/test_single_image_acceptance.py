@@ -61,6 +61,11 @@ def resolved_compose():
             "networks": {"default": None}, "restart": "unless-stopped",
             "volumes": [{"type": "volume", "source": "replica_evidence", "target": "/var/lib/cats"}],
         }
+    services["polling-worker"] = {
+        "image": "cats:test", "entrypoint": [], "command": ["python", "-m", "app.polling_worker"],
+        "environment": {"CATS_MODE": "replica", "CATS_DEPLOYMENT_VALIDATION_ENABLED": "false"},
+        "volumes": [{"type": "volume", "source": "replica_evidence", "target": "/var/lib/cats"}],
+    }
     return {"services": services, "volumes": {"replica_db": {"name": "real-site-db"},
                                                "replica_evidence": {"name": "real-site-evidence"}},
             "networks": {"default": {"name": "real-site-network"}}}
@@ -70,7 +75,7 @@ def test_smoke_preserves_real_startup_and_isolates_all_resources(resolved_compos
     original = copy.deepcopy(resolved_compose)
     actual = smoke.isolated_config(resolved_compose, image="cats:test", project="test-project")
     assert resolved_compose == original
-    for name in smoke.APPLICATIONS:
+    for name in (*smoke.APPLICATIONS, "polling-worker"):
         assert actual["services"][name]["command"] == original["services"][name]["command"]
     assert all("ports" not in service for service in actual["services"].values())
     assert actual["networks"] == {"default": {"name": "test-project_default", "internal": True}}

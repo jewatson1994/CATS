@@ -1,7 +1,7 @@
 """Opt-in Harbor qualification using retained, actually scanned nginx releases.
 
 Use a dedicated --workspace (for example harbor-acceptance/replica). ``prepare``
-creates only that replica's Compose/state files; ``up`` starts its three services.
+creates only that replica's Compose/state files; ``up`` starts its four services.
 The caller seeds Harbor and operates Harbor replication separately. Run setup,
 sync-source, sync-patched, verify, then restart-check. Before sync-patched, stop
 the source Harbor and original publisher. Neither receipts nor database rows are
@@ -26,6 +26,7 @@ from urllib.parse import quote, urlsplit
 import requests
 
 import nginx_replica_workflow as workflow
+from nginx_acceptance_stack import replica_polling_service
 from nginx_replica_acceptance import _digest, _require, assert_root_denied
 from nginx_workflow_integration import API, load, save, wait_for
 
@@ -111,6 +112,7 @@ def prepare(args):
               for name in ('registry.crt', 'ca-bundle.crt')]]
         _require(service.get('cap_drop') == ['ALL'] and 'no-new-privileges:true' in service.get('security_opt', []),
                  'Replica capability isolation must be retained')
+    services['replica-polling-worker'] = replica_polling_service(services['replica-portal'])
     compose = {'services': services, 'networks': {
         'default': {'name': project + '_private', 'internal': True},
         'harbor': {'external': True, 'name': args.network},
@@ -236,7 +238,7 @@ def restart_check(root, stack, state, report, proof):
     _require(report.get('complete') is True and proof.get('complete') is True,
              'Finish the disconnected pull and override qualification before the persistence check')
     original_first_pull = copy.deepcopy(report['patched_first_pull'])
-    compose_call(root, stack, 'restart', 'replica-db', 'replica-portal', 'replica-proxy')
+    compose_call(root, stack, 'restart', 'replica-db', 'replica-portal', 'replica-proxy', 'replica-polling-worker')
     compose_call(root, stack, 'up', '-d', '--wait', '--wait-timeout', '180')
     api = login(root, stack, state, report)
     try:

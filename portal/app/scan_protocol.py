@@ -302,6 +302,12 @@ def _ingest_one():
                         return permission == "scan.ingest" and service_id == service.id
                 # Existing execution ID public:<job> makes crash/replay ingestion idempotent.
                 receipt = main.ingest_public_scan(job_id=job_id, service_id=row.service_key, request=None, db=db, auth=InternalAuth())
+                if payload.get("topic_intake"):
+                    from .models import Execution
+                    execution = db.get(Execution, receipt.get("execution_id")) if receipt.get("accepted") else None
+                    project_complete = bool(execution and execution.complete
+                        and execution.execution_key == "public:" + job_id and execution.service_id == service.id
+                        and execution.commit_sha == payload["topic_intake"].get("commit_sha"))
                 if payload.get("pipeline_input_kind"):
                     from .models import Execution
                     execution = db.get(Execution, receipt.get("execution_id")) if receipt.get("accepted") is True else None

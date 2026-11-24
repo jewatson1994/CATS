@@ -10,7 +10,7 @@ Assess container services, retain the evidence, and manage remediation and secur
 
 ## Deploy CATS
 
-Use the [guided main or replica installer](docs/guided-setup.md) for a deployment with HTTPS ingress. It prepares protected settings, checks certificates and local images, configures OCI access, and applies worker isolation where required. Main and replica use the same full CATS image on **Linux amd64**, selected with `CATS_IMAGE`. The replica runs its own portal, OCI proxy, and database without assessment workers or a Docker socket. Kubernetes and Docker-host agents can use the same image reference. Linux arm64 nodes use the collector variant of that image. [Runtime agent installation](runtime-agent/README.md#kubernetes)
+Use the [guided main or replica installer](docs/guided-setup.md) for a deployment with HTTPS ingress. It prepares protected settings, checks certificates and local images, configures OCI access, and applies worker isolation where required. Main and replica use the same full CATS image on **Linux amd64**, selected with `CATS_IMAGE`. The replica runs its own portal, OCI proxy, database, and worker for polling signed releases. Kubernetes and Docker-host agents can use the same image reference. Linux arm64 nodes use the collector variant of that image. [Runtime agent installation](runtime-agent/README.md#kubernetes)
 
 From a source checkout, create a small installer bundle:
 

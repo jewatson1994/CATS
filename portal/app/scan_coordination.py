@@ -258,6 +258,23 @@ def claim(worker_id):
                 "error": "Imported service evidence is managed by its OCI publisher"}
             db.commit()
             return None
+        topic_verified = False
+        if row.payload.get("credential_policy") == "topic" or row.payload.get("topic_intake"):
+            from .models import Service
+            from .topic_intake_processing import verify_scan
+            service = db.get(Service, row.payload.get("ingest_service_db_id"))
+            try:
+                if (not service or service.service_key != row.service_key or row.payload.get("credential_policy") != "topic"
+                        or row.service_version != row.payload.get("ingest_service_version")):
+                    raise HTTPException(409, "Invalid GitLab topic service binding")
+                verify_scan(db, row.id, row.payload, service)
+                topic_verified = True
+            except HTTPException:
+                row.status, row.finished_at = "cancelled", now()
+                row.payload = {**row.payload, "status": "cancelled", "phase": "cancelled",
+                               "error": "The GitLab topic scan no longer matches its authorized revision."}
+                db.commit()
+                return None
         if row.payload.get("pipeline_input_kind"):
             from .pipeline_scan_dispatch import active_owner_id
             from .models import Service
@@ -302,7 +319,8 @@ def claim(worker_id):
         db.add(ScanAttempt(id=attempt_id, job_id=row.id, worker_id=worker_id,
                            token_hash=hashlib.sha256(token.encode()).hexdigest(), state="running"))
         db.commit()
-        return {"job_id": row.id, "attempt_id": attempt_id, "attempt_token": token,
+        return {**({"topic_intake_verified": True} if topic_verified else {}),
+                "job_id": row.id, "attempt_id": attempt_id, "attempt_token": token,
                 "lease_until": row.lease_until.isoformat(), "input_digest": row.input_digest, "service_key": row.service_key,
                 "service_version": row.service_version, "job": {key: value for key, value in row.payload.items() if key in {"job_kind", "image_list", "chart_url", "skipped_charts", "sbom_formats", "cyclonedx_spec_version", "definition_component", "definition_components", "compose_enabled", "compose_files", "compose_profiles", "compose_preview", "credential_policy"}}}
 

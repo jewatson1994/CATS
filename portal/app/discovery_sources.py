@@ -4,6 +4,7 @@ from contextlib import contextmanager
 import hashlib
 import os
 from pathlib import Path
+import stat
 import tempfile
 
 from cryptography.exceptions import InvalidTag
@@ -19,6 +20,26 @@ CHUNK = 1024 * 1024
 
 class SourceStorageError(ValueError):
     pass
+
+
+def prepare_shared_upload_root():
+    """Allow the Compose polling worker to stage encrypted Discovery inputs."""
+    gid = os.environ.get('CATS_DISCOVERY_UPLOAD_WRITER_GID')
+    if gid is None:
+        return
+    # Only the full portal receives this opt-in setting. Use the explicit
+    # volume root, never follow a symlink, and leave existing inputs alone.
+    root = os.environ['CATS_DISCOVERY_UPLOAD_ROOT']
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(fd)
+        gid = int(gid)
+        if info.st_gid != gid:
+            os.fchown(fd, -1, gid)
+        if info.st_mode & stat.S_IRWXG != stat.S_IRWXG:
+            os.fchmod(fd, stat.S_IMODE(info.st_mode) | stat.S_IRWXG)
+    finally:
+        os.close(fd)
 
 
 def storage_key():

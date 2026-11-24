@@ -2,6 +2,7 @@ import {ArtifactEvidence, type VulnerabilityEvidence} from './artifact_evidence'
 import {useCallback, useEffect, useState, type FormEvent} from 'react';
 
 import {requestJson, type PageData} from '../api';
+import {visibleTimeout} from '../hooks/visibleTimer';
 
 import {ServiceTabs} from '../components/ServiceHeader';
 
@@ -25,25 +26,31 @@ type RecommendationResult = {items: Recommendation[]; can_adopt?: boolean};
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : 'Unable to complete the request.';
 
-function useCatalogResource<T>(url: string) {
+function useCatalogResource<T>(url: string, shouldPoll?: (value: T) => boolean) {
 
   const [state, setState] = useState<{url: string; value?: T; error?: string}>({url});
 
   const [revision, setRevision] = useState(0);
+  const refresh = useCallback(() => setRevision(value => value + 1), []);
 
   useEffect(() => {
 
     const controller = new AbortController();
+    let cancelTimer = () => {};
 
     setState(previous => previous.url === url ? previous : {url});
 
-    requestJson<T>(url, {signal: controller.signal}).then(value => {if (!controller.signal.aborted) setState({url, value});}).catch(error => {if (!controller.signal.aborted) setState({url, error: errorText(error)});});
+    requestJson<T>(url, {signal: controller.signal}).then(value => {
+      if (controller.signal.aborted) return;
+      setState({url, value});
+      if (shouldPoll?.(value)) cancelTimer = visibleTimeout(refresh, 5000);
+    }).catch(error => {if (!controller.signal.aborted) setState({url, error: errorText(error)});});
 
-    return () => controller.abort();
+    return () => {controller.abort(); cancelTimer();};
 
-  }, [url, revision]);
+  }, [url, revision, refresh, shouldPoll]);
 
-  return {...(state.url === url ? state : {url}), refresh: useCallback(() => setRevision(value => value + 1), [])};
+  return {...(state.url === url ? state : {url}), refresh};
 
 }
 
@@ -147,17 +154,14 @@ function ServiceRecommendations({data, service}: {data: PageData; service: {serv
 }
 
 
+const assessmentPending = (value: ProposalReadiness) => ['queued', 'running', 'preparing'].includes(value.assessment_status || '');
+
 function AmendmentReview({data, serviceKey, id, initial}: {data: PageData; serviceKey: string; id: number; initial?: AssessmentReadiness}) {
-  const result = useCatalogResource<ProposalReadiness>(`/api/services/${encodeURIComponent(serviceKey)}/amendment-proposals/${id}/readiness`);
+  const result = useCatalogResource<ProposalReadiness>(`/api/services/${encodeURIComponent(serviceKey)}/amendment-proposals/${id}/readiness`, assessmentPending);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState('');
   const status = result.value?.assessment_status;
-  const processing = ['queued', 'running', 'preparing'].includes(status || '');
-  useEffect(() => {
-    if (!processing) return;
-    const timer = window.setInterval(result.refresh, 5000);
-    return () => window.clearInterval(timer);
-  }, [processing, result.refresh]);
+  const processing = result.value && assessmentPending(result.value);
   async function retryAssessment() {
     setRetrying(true); setRetryError('');
     try {

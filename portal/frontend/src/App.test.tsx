@@ -5,6 +5,9 @@ import {PAGE_MEDIA_TYPE} from './api';
 
 afterEach(()=>{vi.unstubAllGlobals();window.history.replaceState(null,'','/');});
 it('intercepts only native page routes, never exports or auth callbacks',()=>{
+  expect(isPageRoute('/unclaimed-services')).toBe(true);
+  expect(isPageRoute('/admin/topic-polling')).toBe(true);
+  expect(isPageRoute('/api/unclaimed-services')).toBe(false);
   for(const path of ['/scan','/services/payments','/services/payments/history','/services/payments/definitions','/services/payments/exchange','/services/payments/findings/12','/poam/entries/12']) expect(isPageRoute(path)).toBe(true);
   for(const path of ['/services/payments/export.xlsx','/login/oidc/callback','/services/payments/artifacts/1/download','/api/public/jobs/test/results.zip']) expect(isPageRoute(path)).toBe(false);
 });

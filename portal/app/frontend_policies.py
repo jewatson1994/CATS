@@ -30,6 +30,10 @@ def policies_data(context, formatter=None):
     data['raw_due_rules'] = [fields(rule, ('severity', 'days')) for rule in context.get('raw_due_rules', [])]
     data['epss_rules'] = [fields(rule, ('severity', 'threshold', 'noncompliant')) for rule in context.get('epss_rules', [])]
     data['entries'] = [fields(entry, ('id', 'purl', 'ecosystem', 'name', 'version_constraint', 'enabled')) for entry in context.get('entries', [])]
+    if 'entry_total' in context:
+        data.update(fields(context, ('entry_page', 'entry_pages', 'entry_page_size', 'entry_total', 'entry_query')))
+        job = context.get('refresh_job')
+        data['refresh_job'] = fields(job, ('id', 'status', 'stage', 'progress', 'error')) if job else None
     data['events'] = []
     if data['may_audit']:
         for event in context.get('events', []):

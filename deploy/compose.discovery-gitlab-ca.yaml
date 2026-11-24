@@ -1,6 +1,6 @@
 # Optional additional TLS trust for GitLab repository imports.
 services:
-  portal:
+  portal: &gitlab_ca
     environment:
       CATS_DISCOVERY_GITLAB_CA_FILE: /etc/cats/gitlab-ca.pem
     volumes:
@@ -10,3 +10,5 @@ services:
         read_only: true
         bind:
           create_host_path: false
+  polling-worker: *gitlab_ca
+  discovery-worker: *gitlab_ca

@@ -378,7 +378,7 @@ def test_runtime_inventory_covers_actual_template_bind_mounts(mode):
         for mount in service.get("volumes", []):
             if isinstance(mount, dict) and mount.get("type") == "bind":
                 expected.add((mount["source"], mount["target"]))
-            elif isinstance(mount, str) and mount.startswith(("/", "./", "../", "${")):
+            elif isinstance(mount, str) and ":/" in mount and mount.startswith(("/", "./", "../", "${")):
                 # Split at the actual mount separator rather than the default in ${...:-...}.
                 source, target = mount.rsplit(":/", 1)
                 expected.add((source, "/" + target.split(":", 1)[0]))

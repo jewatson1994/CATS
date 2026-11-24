@@ -16,12 +16,16 @@ from .diagnostics import public_diagnostic
 
 router = APIRouter(tags=["jobs"])
 
+GLOBAL_CONFIG_JOBS = ("watchlist_refresh", "gitlab_topic_poll", "gitlab_topic_preview", "topic_intake_process")
+
 
 def _permission(kind):
     return "service.export" if kind.startswith("export") or kind == "remediation_deliver" else "remediation.execute"
 
 
 def authorized(job, auth, db):
+    if job.kind in GLOBAL_CONFIG_JOBS:
+        return auth.can_manage_group(None)
     if job.kind.startswith("export"):
         scopes = (job.payload or {}).get("scopes")
         return (job.requested_by_id == auth.user.id and isinstance(scopes, dict)
@@ -81,6 +85,8 @@ def dto(db, job, auth, list_result=None):
 
 def _durable_filter(auth):
     expressions = []
+    if auth.can_manage_group(None):
+        expressions.append(DurableJob.kind.in_(GLOBAL_CONFIG_JOBS))
     for prefix, permission in (("remediation", "remediation.execute"),):
         ids = auth.accessible_service_ids(permission)
         scope = DurableJob.service_id.is_not(None) if ids is None else DurableJob.service_id.in_(ids)
