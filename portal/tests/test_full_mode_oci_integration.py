@@ -8,7 +8,8 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from app import main, frontend, replica_sync
-from app.models import DeploymentValidationRun, Execution, Service, ServiceImage, User
+from app.auth import AuthContext
+from app.models import DeploymentValidationRun, Execution, Service, ServiceImage, User, UserSession
 from test_replica_authorization import replica
 
 
@@ -105,10 +106,7 @@ def test_imported_service_page_flags_do_not_switch_full_navigation(replica, monk
     monkeypatch.setattr(main, 'SessionLocal', replica.sessions)
     with replica.sessions() as db:
         service = db.get(Service, replica.service_id)
-        auth = SimpleNamespace(user=db.get(User, replica.user_id),
-            session=SimpleNamespace(id='test', csrf_token='csrf'), csrf_token='csrf',
-            effective_assignments=[], accessible_service_ids=lambda permission: set(),
-            has=lambda *args: False)
+        auth = AuthContext(db.get(User, replica.user_id), UserSession(id=1, user_id=replica.user_id, csrf_token='csrf'))
         subject = (SimpleNamespace(id=service.id) if representation == 'namespace'
                    else {'id': service.id} if representation == 'dict' else service)
         context = main.page_context(auth, view={'service': subject})
