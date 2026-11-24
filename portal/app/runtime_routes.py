@@ -15,7 +15,8 @@ from sqlalchemy.orm import Session, defer
 
 from .auth import AuthContext, record_audit, require_permission
 from .database import get_db
-from .models import Service
+from .models import Group, Service
+from . import runtime_applications as applications
 from .release_validity import utc
 from .runtime_models import RuntimeAgent, RuntimeEnvironment, RuntimeEnrollmentReceipt, RuntimeLinkToken, expire_link_keys, now
 from .service_oci import _csrf
@@ -27,6 +28,46 @@ MAX_BODY = 2 * 1024 * 1024
 MAX_WORKLOADS = 2000
 DISPLAY_LIMIT = 5000
 STALE_SECONDS = 300
+CLUSTER_ROLES = ('unspecified', 'development', 'validation', 'production')
+ENVIRONMENT_FIELDS = {
+    'name': {'type': 'string', 'maxLength': 160},
+    'kind': {'type': 'string', 'enum': ['kubernetes', 'docker']},
+    'cluster_role': {'type': 'string', 'enum': list(CLUSTER_ROLES), 'default': 'unspecified'},
+    'discovery_group_id': {'type': ['integer', 'null']},
+    'service_scope': {'type': 'string', 'enum': ['all', 'selected']},
+    'service_ids': {'type': 'array', 'items': {'type': 'integer', 'minimum': 1}, 'maxItems': 256},
+}
+OPTIONAL_FIELDS = {'pod', 'workload_kind', 'container_kind', 'namespace_uid', 'pod_uid', 'workload_uid',
+                   'controller_uid', 'controller_kind', 'controller_name', 'helm_namespace', 'app_name',
+                   'app_instance', 'app_part_of', 'app_version', 'service_hint', 'chart_digest', 'desired_image'}
+OBSERVATION_LIMITS = dict.fromkeys(OPTIONAL_FIELDS | {'namespace', 'workload', 'container', 'node', 'state',
+                                                      'chart_name', 'chart_version', 'helm_release'}, 255)
+OBSERVATION_LIMITS.update(uid=512, image_ref=1024, image_id=1024, desired_image=1024)
+
+
+def json_body(properties, required):
+    schema = {'type': 'object', 'properties': properties, 'additionalProperties': False, 'required': list(required)}
+    return {'requestBody': {'required': True, 'content': {'application/json': {'schema': schema}}}}
+
+
+def report_body_schema(max_rows, max_pages=None):
+    fields = {k: {'type': 'string', 'maxLength': size} for k, size in sorted(OBSERVATION_LIMITS.items())}
+    fields['container_kind']['enum'] = ['', 'regular', 'init', 'ephemeral']
+    fields['chart_digest']['pattern'] = '^sha256:[0-9a-f]{64}$'
+    fields['service_hint']['description'] = 'Untrusted suggestion for human assignment.'
+    observation = {'type': 'object', 'additionalProperties': False, 'required': ['uid', 'container', 'state'], 'properties': fields}
+    report = {'sequence': {'type': 'integer', 'minimum': 1, 'maximum': 2147483647},
+              'observed_at': {'type': 'string', 'format': 'date-time'}, 'complete': {'type': 'boolean'},
+              'discovery_version': {'type': 'integer', 'enum': [1]},
+              'errors': {'type': 'array', 'maxItems': 32, 'items': {'type': 'string', 'pattern': '^[a-z0-9_.:-]{1,100}$'}},
+              'workloads': {'type': 'array', 'maxItems': max_rows, 'items': observation}}
+    required = ['sequence', 'observed_at', 'complete', 'workloads']
+    if max_pages:
+        report.update(page={'type': 'integer', 'minimum': 0, 'maximum': max_pages-1},
+                      pages={'type': 'integer', 'minimum': 1, 'maximum': max_pages},
+                      snapshot_sha256={'type': 'string', 'pattern': '^[0-9a-f]{64}$'})
+        required.extend(('page', 'pages', 'snapshot_sha256'))
+    return json_body(report, required)
 
 
 def hashed(value):
@@ -84,7 +125,23 @@ def environment(db, identity, *, lock=False):
 
 def environment_public(row):
     return {'id': row.id, 'name': row.name, 'kind': row.kind,
+            'cluster_role': row.cluster_role, 'discovery_group_id': row.discovery_group_id,
             'service_scope': row.service_scope, 'service_ids': row.service_ids, 'created_at': iso(row.created_at)}
+
+
+def discovery_settings(db, row, data):
+    if 'cluster_role' in data:
+        role = data['cluster_role']
+        if role not in CLUSTER_ROLES:
+            raise HTTPException(422, 'Select a supported cluster role')
+        if role != 'unspecified' and row.kind != 'kubernetes':
+            raise HTTPException(422, 'Application discovery roles require a Kubernetes environment')
+        row.cluster_role = role
+    if 'discovery_group_id' in data:
+        identity = data['discovery_group_id']
+        if identity is not None and (type(identity) is not int or not db.get(Group, identity)):
+            raise HTTPException(422, 'Select an existing discovery group')
+        row.discovery_group_id = identity
 
 
 def scope(db, value, mode, *, lock=False):
@@ -154,6 +211,7 @@ def overview(environment_id: int | None = Query(default=None, ge=1),
     if environment_id is not None and not environments:
         raise HTTPException(404, 'Environment not found')
     by_id = {row.id: row for row in environments}
+    mappings = applications.mapping_index(db, [row.id for row in environments if row.cluster_role != 'unspecified'])
     clusters = {row.id: {**environment_public(row), 'agent_count': 0, 'workload_count': 0, 'namespace_count': 0,
                          'issue_count': 0, 'inventory_truncated': False, 'coverage': 'unlinked',
                          'can_manage': auth.has('runtime.manage')} for row in environments}
@@ -166,7 +224,11 @@ def overview(environment_id: int | None = Query(default=None, ge=1),
         cluster['issue_count'] += 1
         namespace = observation.get('namespace') if observation else None
         if namespace:
-            namespaces[(cluster['id'], namespace)]['issue_count'] += 1
+            key = cluster['id'], namespace
+            if key not in namespaces:
+                namespaces[key] = dict(environment_id=cluster['id'], name=namespace, workload_count=0, issue_count=0)
+                cluster['namespace_count'] += 1
+            namespaces[key]['issue_count'] += 1
         if issue_namespace is not None and issue_namespace != namespace:
             return
         if issue_code is not None and issue_code not in reasons:
@@ -181,13 +243,14 @@ def overview(environment_id: int | None = Query(default=None, ge=1),
         if observation:
             issue['compliance'] = decision
             issue.update({field: observation.get(field, '') for field in
-                          ('uid', 'namespace', 'pod', 'workload', 'container', 'image_ref', 'image_id')})
+                          ('uid', 'namespace', 'pod', 'workload', 'container', 'image_ref', 'image_id', 'observed_at')})
             issue.update({field: decision[field] for field in ('service_id', 'approval_id', 'release_id', 'override_id')
                           if field in decision})
         issues.append(issue)
 
     agents, workloads, total = [], [], 0
     previous_environment, seen_uids = None, set()
+    complete_production = {}
     for row in db.scalars(agents_query):
         status = coverage(row, timestamp)
         cluster = clusters[row.environment_id]
@@ -202,6 +265,10 @@ def overview(environment_id: int | None = Query(default=None, ge=1),
                 cluster['coverage'] = 'revoked'
             continue
         cluster['agent_count'] += 1
+        env = by_id[row.environment_id]
+        if (env.cluster_role == 'production' and status == 'fresh' and env.discovery_observed_at and
+                row.inventory_observed_at and utc(env.discovery_observed_at) == utc(row.inventory_observed_at)):
+            complete_production.setdefault(env.id, row.id)
         if coverage_rank[status] > coverage_rank.get(cluster['coverage'], -1):
             cluster['coverage'] = status
         if status != 'fresh':
@@ -211,6 +278,8 @@ def overview(environment_id: int | None = Query(default=None, ge=1),
             previous_environment = row.environment_id
         decisions = decision_cache[row.environment_id]
         for observation in row.workloads:
+            if observation['state'] == 'desired':
+                continue
             if cluster['kind'] == 'kubernetes':
                 if observation['uid'] in seen_uids:
                     continue
@@ -224,23 +293,35 @@ def overview(environment_id: int | None = Query(default=None, ge=1),
                     namespaces[key] = dict(environment_id=row.environment_id, name=namespace, workload_count=0, issue_count=0)
                     cluster['namespace_count'] += 1
                 namespaces[key]['workload_count'] += 1
-            key = (observation['state'], observation['image_ref'], observation['image_id'])
+            app = mappings.get((row.environment_id, applications.workload_key(observation)))
+            service_id = app.service_id if app and applications.in_scope(by_id[row.environment_id], app.service_id) else None
+            key = (observation['state'], observation['image_ref'], observation['image_id'], service_id,
+                   observation.get('workload_kind'), observation.get('workload'), observation.get('container_kind'), observation.get('container'))
             if status != 'fresh':
                 decision = {'status': 'unverified', 'reason': 'coverage_' + status}
             elif key in decisions:
                 decision = decisions[key]
             else:
-                decision = evaluate_observation(db, by_id[row.environment_id], observation, now=timestamp, cache=policy_cache)
+                env = by_id[row.environment_id]
+                scope = dict(kind=env.kind, service_scope='selected', service_ids=[service_id]) if service_id else env
+                decision = evaluate_observation(db, scope, observation, now=timestamp, cache=policy_cache)
+                if env.cluster_role in ('development', 'validation'):
+                    decision = {**decision, 'status': 'observed', 'reason': env.cluster_role + '_inventory'}
+                elif env.cluster_role == 'production' and observation['state'] == 'running':
+                    decision = applications.production_decision(db, decision, observation, service_id, timestamp, policy_cache)
                 decisions[key] = decision
             if status == 'fresh' and observation['state'] == 'running':
                 reasons = workload_issue_reasons(decision)
                 if reasons:
-                    add_issue(cluster, row.id, reasons, observation, decision)
+                    add_issue(cluster, row.id, reasons, {**observation, 'observed_at': iso(row.inventory_observed_at)}, decision)
             if not offset <= position < offset + limit:
                 cluster['inventory_truncated'] = True
                 continue
             workloads.append({**observation, 'agent_id': row.id, 'environment_id': row.environment_id,
                               'observed_at': iso(row.inventory_observed_at), 'compliance': decision})
+    for identity, agent_id in complete_production.items():
+        for missing, decision in applications.missing_components(db, by_id[identity], timestamp, policy_cache):
+            add_issue(clusters[identity], agent_id, workload_issue_reasons(decision), missing, decision)
     for cluster in clusters.values():
         if cluster['coverage'] in ('unlinked', 'revoked'):
             add_issue(cluster, None, {'coverage': 'coverage_' + cluster['coverage']})
@@ -252,37 +333,41 @@ def overview(environment_id: int | None = Query(default=None, ge=1),
                   'workloads': workloads, 'total_workloads': total, 'inventory_truncated': len(workloads) < total,
                   'next_offset': offset + limit if offset + limit < total else None, 'offset': offset,
                   'services': [{'id': row.id, 'name': row.name} for row in db.scalars(select(Service).order_by(Service.name))],
+                  'groups': [{'id': group.id, 'name': group.name} for group in db.scalars(select(Group).order_by(Group.name))] if auth.has('runtime.manage') else [],
                   'permissions': {'manage': auth.has('runtime.manage')}})
 
 
-@router.post('/environments')
+@router.post('/environments', openapi_extra=json_body(ENVIRONMENT_FIELDS, ('name', 'kind')))
 async def create_environment(request: Request, db: Session = Depends(get_db), auth: AuthContext = Depends(manage)):
     _csrf(request, auth)
-    data = await body(request, {'name', 'kind', 'service_ids', 'service_scope'})
+    data = await body(request, {'name', 'kind', 'service_ids', 'service_scope', 'cluster_role', 'discovery_group_id'})
     if data.get('kind') not in ('kubernetes', 'docker'):
         raise HTTPException(422, 'Choose Kubernetes or Docker')
     mode = data.get('service_scope', 'selected')
     row = RuntimeEnvironment(name=text(data.get('name'), 'name', 160), kind=data['kind'], service_scope=mode,
                              service_ids=scope(db, data.get('service_ids', []), mode, lock=True))
     db.add(row)
+    discovery_settings(db, row, data)
     try:
         db.flush()
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, 'Environment name already exists') from None
-    record_audit(db, auth, 'runtime.environment.created', 'runtime_environment', row.id, name=row.name)
+    record_audit(db, auth, 'runtime.environment.created', 'runtime_environment', row.id, name=row.name,
+                 cluster_role=row.cluster_role, discovery_group_id=row.discovery_group_id)
     commit(db)
     return reply(environment_public(row))
 
 
-@router.put('/environments/{identity}')
+@router.put('/environments/{identity}', openapi_extra=json_body({k: v for k, v in ENVIRONMENT_FIELDS.items() if k != 'kind'}, ()))
 async def edit_environment(identity: int, request: Request, db: Session = Depends(get_db), auth: AuthContext = Depends(manage)):
     _csrf(request, auth)
-    data = await body(request, {'name', 'service_scope', 'service_ids'})
+    data = await body(request, {'name', 'service_scope', 'service_ids', 'cluster_role', 'discovery_group_id'})
     if 'service_ids' in data:
         # Match service deletion's service -> environment lock order.
         scope(db, data['service_ids'], data.get('service_scope', 'selected'), lock=True)
     row = environment(db, identity, lock=True)
+    discovery_settings(db, row, data)
     if 'name' in data:
         row.name = text(data['name'], 'name', 160)
     if 'service_ids' in data or 'service_scope' in data:
@@ -291,8 +376,13 @@ async def edit_environment(identity: int, request: Request, db: Session = Depend
         if mode != row.service_scope or sorted(row.service_ids) != updated:
             row.service_scope, row.service_ids = mode, updated
             expire_link_keys(db, identity)
+    if {'cluster_role', 'service_ids', 'service_scope'} & data.keys():
+        scopes = set(db.execute(select(applications.RuntimeApplication.service_id, applications.RuntimeApplication.namespace)
+            .where(applications.RuntimeApplication.environment_id == identity, applications.RuntimeApplication.service_id.is_not(None))))
+        applications.prepare(db, row, scopes)
     record_audit(db, auth, 'runtime.environment.updated', 'runtime_environment', row.id,
-                 name=row.name, service_ids=row.service_ids, service_scope=row.service_scope)
+                 name=row.name, service_ids=row.service_ids, service_scope=row.service_scope,
+                 cluster_role=row.cluster_role, discovery_group_id=row.discovery_group_id)
     commit(db)
     return reply(environment_public(row))
 
@@ -423,6 +513,8 @@ def authenticate(request, db):
 
 
 def validate_report(data, timestamp, *, max_workloads=MAX_WORKLOADS):
+    if 'discovery_version' in data and (type(data['discovery_version']) is not int or data['discovery_version'] != 1):
+        raise HTTPException(422, 'Unsupported runtime discovery protocol version')
     sequence = data.get('sequence')
     if type(sequence) is not int or not 1 <= sequence <= 2147483647 or type(data.get('complete')) is not bool:
         raise HTTPException(422, 'A positive sequence and complete boolean are required')
@@ -442,33 +534,35 @@ def validate_report(data, timestamp, *, max_workloads=MAX_WORKLOADS):
     workloads = data.get('workloads')
     if not isinstance(workloads, list) or len(workloads) > max_workloads:
         raise HTTPException(422, f'Report at most {max_workloads} container observations')
-    limits = {'uid': 512, 'namespace': 255, 'workload': 255, 'container': 255, 'node': 255,
-              'image_ref': 1024, 'image_id': 1024, 'state': 255,
-              'chart_name': 255, 'chart_version': 255, 'helm_release': 255,
-              'pod': 255, 'workload_kind': 255, 'container_kind': 255}
     cleaned, seen = [], set()
     for item in workloads:
-        if not isinstance(item, dict) or set(item) - set(limits):
+        if not isinstance(item, dict) or set(item) - OBSERVATION_LIMITS.keys():
             raise HTTPException(422, 'Unknown observation fields; report only container metadata')
         observation = {key: text(item.get(key, ''), key, limit, required=key in {'uid', 'container', 'state'})
-                       for key, limit in limits.items()
-                       if key in item or key not in ('pod', 'workload_kind', 'container_kind')}
+                       for key, limit in OBSERVATION_LIMITS.items()
+                       if key in item or key not in OPTIONAL_FIELDS}
         if observation.get('container_kind', '') not in ('', 'regular', 'init', 'ephemeral'):
             raise HTTPException(422, 'Invalid container kind')
+        if 'chart_digest' in item and not re.fullmatch(r'sha256:[a-f0-9]{64}', item['chart_digest']):
+            raise HTTPException(422, 'Chart digest must be a lowercase SHA-256 digest')
         if observation['uid'] in seen:
             raise HTTPException(422, 'Container observation identities must be unique')
-        if observation['state'] not in {'running', 'waiting', 'terminated', 'unknown', 'paused', 'restarting', 'exited', 'created', 'dead', 'removing'}:
+        if observation['state'] not in {'running', 'waiting', 'terminated', 'unknown', 'paused', 'restarting', 'exited', 'created', 'dead', 'removing', 'desired'}:
             raise HTTPException(422, 'Invalid container state')
+        if observation['state'] == 'desired' and (data.get('discovery_version') != 1 or observation['image_id']
+                or observation.get('pod') or observation.get('pod_uid') or not observation.get('workload_uid')
+                or observation.get('container_kind') not in ('regular', 'init')):
+            raise HTTPException(422, 'Desired template components require a controller and cannot claim a running image')
         seen.add(observation['uid'])
         cleaned.append(observation)
     return observed, errors, cleaned
 
 
-@router.post('/reports')
+@router.post('/reports', openapi_extra=report_body_schema(MAX_WORKLOADS))
 async def report(request: Request, db: Session = Depends(get_db)):
     row, token_hash = authenticate(request, db)
     db.rollback()  # Release the admission connection while reading the network body.
-    data = await body(request, {'sequence', 'observed_at', 'complete', 'errors', 'workloads'}, limit=MAX_BODY)
+    data = await body(request, {'sequence', 'observed_at', 'complete', 'errors', 'workloads', 'discovery_version'}, limit=MAX_BODY)
     try:
         return await run_in_threadpool(accept_report, db, row, token_hash, data, now())
     finally:
@@ -507,6 +601,13 @@ def accept_report(db, row, token_hash, data, timestamp, *, max_workloads=MAX_WOR
     if changed.rowcount != 1:
         db.rollback()
         raise HTTPException(409, 'Agent state changed; retry the report')
+    if data['complete'] and data.get('discovery_version') == 1:
+        env = environment(db, row.environment_id, lock=True)
+        applications.reconcile_inventory(db, env, observed, workloads)
     clear_pages(db, row.id, through_sequence=data['sequence'])
     commit(db)
     return reply({'accepted': True, 'duplicate': False, 'sequence': data['sequence']})
+
+
+from .runtime_application_routes import router as application_router
+router.include_router(application_router)

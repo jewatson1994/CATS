@@ -308,7 +308,7 @@ def _ingest_one():
                     if (not execution or execution.execution_key != "public:" + job_id
                             or execution.service_id != payload.get("ingest_service_db_id")
                             or not execution.service_version or execution.service_version.version != row.service_version
-                            or execution.scan_scope != "evidence"):
+                            or execution.scan_scope != ("distribution" if payload.get("runtime_candidate_artifact") else "evidence")):
                         raise ValueError("Project evidence did not match the bound submission")
                     payload["pipeline_execution_id"] = execution.id
                     project_complete = execution.complete
@@ -348,6 +348,7 @@ def _ingest_one():
 
 async def maintenance():
     from .service_scan_schedule import dispatch_due
+    from .runtime_candidate_assessment import dispatch_pending
     next_schedule_check = 0
     while True:
         if time.monotonic() >= next_schedule_check:
@@ -356,6 +357,10 @@ async def maintenance():
                 await asyncio.to_thread(dispatch_due)
             except Exception:
                 logging.getLogger(__name__).exception("Scheduled scan maintenance failed")
+            try:
+                await asyncio.to_thread(dispatch_pending)
+            except Exception:
+                logging.getLogger(__name__).exception("Runtime release assessment maintenance failed")
         try:
             await asyncio.to_thread(ingest_one)
             await asyncio.to_thread(retention_once)

@@ -71,11 +71,14 @@ jobs:
         run: |
           python -m pytest --noconftest -q portal/tests/test_runtime_collector.py
           python runtime-agent/tests/test_chart.py
-      - name: Verify portal enrollment, release expiry and atomic inventory reporting
+      - name: Verify portal enrollment, runtime discovery and release approval
         working-directory: portal
         run: |
           python -m pytest -q tests/test_runtime_routes.py tests/test_runtime_policy.py \
-            tests/test_runtime_report_pages.py tests/test_runtime_release_expiration.py tests/test_runtime_integration.py
+            tests/test_runtime_report_pages.py tests/test_runtime_release_expiration.py tests/test_runtime_integration.py \
+            tests/test_runtime_discovery_collector.py tests/test_runtime_applications.py tests/test_runtime_candidates.py \
+            tests/test_runtime_assessment_catalog.py tests/test_runtime_resolution_diagnostics.py tests/test_runtime_release_review.py \
+            tests/test_runtime_production_components.py
       - name: Smoke test container entrypoint and UID
         run: |
           docker build -t cats-runtime:check runtime-agent

@@ -14,6 +14,7 @@ const overview = (): RuntimeOverview => ({
   workloads: [{agent_id: 'agent-1', environment_id: 1, uid: 'pod-1', namespace: 'production', workload: 'Payments', container: 'app', node: 'node-1',
     image_ref: 'registry.example/payments:1', image_id: 'sha256:abc', state: 'running', chart_name: 'payments', chart_version: '1.0.0', helm_release: 'payments-prod',
     compliance: {status: 'approved', reason: 'exact_digest_match', service_id: 7, release_id: 8, approval_id: 9}}],
+  groups: [{id: 3, name: 'Payments team'}],
   services: [{id: 7, name: 'Payments service'}, {id: 8, name: 'Orders service'}], permissions: {manage: true},
 });
 let current: RuntimeOverview;
@@ -198,6 +199,14 @@ it('pages cluster observations and fleet issues independently', async () => {
   expect(screen.getByRole('button', {name:'Previous issues'})).toBeEnabled();
 });
 
+it('shows a neutral discovery observation in development clusters', async () => {
+  current.workloads[0].compliance = {status: 'observed', reason: 'development_inventory'};
+  await ready();
+  expect(screen.getByText('Observed')).toBeVisible();
+  expect(screen.getByText('Observed in development.')).toBeVisible();
+  expect(screen.getByText('No scan assessment')).toBeVisible();
+});
+
 it('creates new clusters with dynamic all-service scope by default', async () => {
   await ready();
   fireEvent.click(screen.getByRole('button', {name:'New environment'}));
@@ -206,7 +215,7 @@ it('creates new clusters with dynamic all-service scope by default', async () =>
   fireEvent.click(form.getByRole('button', {name:'Create environment'}));
   await screen.findByText('Environment saved.');
   expect(requestJson).toHaveBeenCalledWith('/api/runtime/environments', expect.objectContaining({method:'POST',
-    body:JSON.stringify({name:'Site B',kind:'kubernetes',service_scope:'all',service_ids:[]})}));
+    body:JSON.stringify({name:'Site B',kind:'kubernetes',service_scope:'all',service_ids:[],cluster_role:'unspecified',discovery_group_id:null})}));
   expect(screen.getByRole('button', {name:'Link agent'})).toBeEnabled();
 });
 
@@ -220,6 +229,7 @@ it('creates a named environment with explicit services and a CSRF header', async
   expect(within(form).getByText(/Select at least one/)).toBeVisible();
   fireEvent.change(within(form).getByLabelText('Environment name'), {target: {value: 'Edge Docker 02'}});
   fireEvent.change(within(form).getByLabelText('Runtime type'), {target: {value: 'docker'}});
+  expect(within(form).queryByLabelText('Cluster role')).toBeNull();
   fireEvent.click(within(form).getByLabelText('Orders service'));
   fireEvent.click(within(form).getByRole('button', {name: 'Create environment'}));
   await screen.findByText('Environment saved.');
@@ -240,13 +250,15 @@ it('edits environment scope without changing the runtime type', async () => {
   const form = screen.getByRole('region', {name: 'Edit environment'});
   expect(within(form).getByLabelText('Runtime type')).toBeDisabled();
   fireEvent.change(within(form).getByLabelText('Environment name'), {target: {value: 'Core Cluster 01 renamed'}});
+  fireEvent.change(within(form).getByLabelText('Cluster role'), {target: {value: 'validation'}});
+  fireEvent.change(within(form).getByLabelText('Discovery group'), {target: {value: '3'}});
   fireEvent.click(within(form).getByLabelText('Payments service'));
   expect(within(form).getByRole('button', {name:'Save environment'})).toBeDisabled();
   fireEvent.change(within(form).getByLabelText('Approval scope'), {target:{value:'all'}});
   fireEvent.click(within(form).getByRole('button', {name: 'Save environment'}));
   await screen.findByText('Environment saved.');
   expect(requestJson).toHaveBeenCalledWith('/api/runtime/environments/1', expect.objectContaining({method: 'PUT',
-    body: JSON.stringify({name: 'Core Cluster 01 renamed', service_scope: 'all', service_ids: []}),
+    body: JSON.stringify({name: 'Core Cluster 01 renamed', service_scope: 'all', service_ids: [], cluster_role: 'validation', discovery_group_id: 3}),
   }));
 });
 

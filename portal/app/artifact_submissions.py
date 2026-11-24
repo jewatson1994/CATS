@@ -253,6 +253,8 @@ def _queue(db, authorization, key, options, upload):
         if project.owning_group_id is None or job.payload.get('pipeline_owning_group_id') != project.owning_group_id:
             raise HTTPException(403, 'The project credential no longer matches the service owning group')
         job.payload = {**job.payload, 'project_credential_id': project.id}
+        if file_hash and (work_dir / 'retained-chart.tgz').is_file():
+            job.payload = {**job.payload, 'chart_archive_digest': 'sha256:' + file_hash}
         row.kind = job.payload['pipeline_input_kind']
         audit_project_use(db, project, 'artifact.submitted', target_type='scan_job', target_id=job_id)
         db.flush()  # Production sessions disable autoflush; the receipt reads the persisted job.

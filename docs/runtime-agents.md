@@ -2,6 +2,8 @@
 
 Open **Clusters & agents** (`/runtime`) on the CATS portal to see which clusters are reporting and which namespaces need attention. Each running image has separate results for Approved Release membership and current scan compliance. Kubernetes and Linux Docker collectors send inventory to a CATS main or replica over HTTPS.
 
+For cluster roles, unassigned applications, release assessments and Cyber submission, see the [runtime release workflow](runtime-release-workflow.md).
+
 ## Connect a cluster
 
 1. On the CATS instance the cluster can reach, choose **New environment**. Give it a recognizable cluster name and choose **Kubernetes**. The default **All active CATS services** includes services that become active later. Choose **Selected services** and pick at least one to limit release matching. Older environments retain their selected scope. Select a scope in the portal before linking another agent to an older environment with an empty selection. Save the environment and use one collector per cluster to avoid counting the same Pods twice. Collection includes Pods across namespaces. The service scope controls which release evidence CATS considers.

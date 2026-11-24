@@ -2,6 +2,8 @@
 
 Cyber approval records a decision on a retained service snapshot. Registry publication is a separate operation. A release can be approved while publication is pending, publishing, or failed; consumers should retrieve artifacts only from a successfully published release.
 
+For an automatically prepared Kubernetes candidate, open the application under Services and follow the [runtime release workflow](runtime-release-workflow.md).
+
 ## Request a review
 
 Open a service and choose **Request Cyber Approval**, or use its **Approvals** tab. Select **Current Service** or a specific **CATS Remediated** candidate in the release variant selector, then submit. Candidates are associated with the current service scan and version.

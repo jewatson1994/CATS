@@ -23,6 +23,16 @@ def pages(value):
              "snapshot_sha256": digest(value)} for i, row in enumerate(value["workloads"])]
 
 
+def test_empty_discovery_page_is_complete_and_replayable(context):
+    client, _, _ = context
+    linked, _ = enroll(client)
+    value = dict(snapshot(), workloads=[], discovery_version=1)
+    page = dict(value, page=0, pages=1, snapshot_sha256=digest(value))
+    assert send_page(client, linked, dict(page, pages=2)).status_code == 422
+    assert send_page(client, linked, page).json()["accepted"] is True
+    assert send_page(client, linked, page).json()["duplicate"] is True
+
+
 def test_collector_resumes_large_snapshot_after_lost_acks(context):
     client, db, _ = context
     linked, _ = enroll(client)

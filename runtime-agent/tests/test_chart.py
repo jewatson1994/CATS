@@ -51,7 +51,12 @@ class RuntimeChartTest(unittest.TestCase):
         self.assertEqual(deployment["spec"]["replicas"], 1)
         spec = pod(objects)
         self.assertEqual(spec["serviceAccountName"], objects["ServiceAccount"]["metadata"]["name"])
-        self.assertEqual(objects["ClusterRole"]["rules"], [{"apiGroups":[""], "resources":["pods"], "verbs":["list"]}])
+        self.assertEqual(objects["ClusterRole"]["rules"], [
+            {"apiGroups": [""], "resources": ["pods", "namespaces"], "verbs": ["list", "watch"]},
+            {"apiGroups": ["apps"], "resources": ["deployments", "statefulsets", "daemonsets", "replicasets"],
+             "verbs": ["list", "watch"]},
+            {"apiGroups": ["batch"], "resources": ["jobs", "cronjobs"], "verbs": ["list", "watch"]},
+        ])
         binding = objects["ClusterRoleBinding"]
         self.assertEqual(binding["roleRef"]["name"], objects["ClusterRole"]["metadata"]["name"])
         self.assertEqual(binding["subjects"], [{"kind":"ServiceAccount", "name":spec["serviceAccountName"], "namespace":"runtime"}])

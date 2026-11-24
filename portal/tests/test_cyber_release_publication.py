@@ -281,6 +281,33 @@ def test_offline_attestation_verifier_rejects_rehashed_invalid_graph(environment
         namespace['verify_attestations'](output, artifact, {inventory['layout_name']: inventory}, output / 'release-public-key.pem')
 
 
+def test_runtime_publication_checks_root_before_copying_index_or_signing_siblings(environment):
+    source = environment.source
+    item = environment.approval.snapshot['artifacts'][0]
+    leaf = source.data['manifests'][item['digest']]
+    index = publication.canonical({'schemaVersion': 2, 'mediaType': release_oci.INDEX_TYPE, 'manifests': [
+        descriptor(leaf, release_oci.MANIFEST_TYPE),
+        {'mediaType': release_oci.MANIFEST_TYPE, 'digest': 'sha256:' + 'f' * 64, 'size': 9}]})
+    digest = release_oci._digest(index)
+    source.data['manifests'][digest] = index
+    item.update(reference='source.example/app@' + digest, digest=digest)
+    environment.approval.snapshot['runtime_evidence'] = {'candidate_id': 1}
+    environment.approval.snapshot_digest = release_oci._digest(publication.canonical(environment.approval.snapshot))
+    with pytest.raises(publication.PublicationError, match='independent assessment') as err:
+        publish(environment, [])
+    assert err.value.receipt['artifacts'] == []
+    target = environment.Registry('approved.example', 'team/demo/app')
+    assert target.data == {'manifests': {}, 'blobs': {}}
+
+
+def test_runtime_publication_allows_single_platform_and_retries_verified_bundle(environment):
+    environment.approval.snapshot['runtime_evidence'] = {'candidate_id': 1}
+    environment.approval.snapshot_digest = release_oci._digest(publication.canonical(environment.approval.snapshot))
+    first = publish(environment, [])
+    assert first['status'] == 'published'
+    assert publish(environment, [])['bundle_digest'] == first['bundle_digest']
+
+
 def test_copy_preserves_multi_platform_index(environment, tmp_path):
     source = environment.source
     original = environment.approval.snapshot["artifacts"][0]["digest"]

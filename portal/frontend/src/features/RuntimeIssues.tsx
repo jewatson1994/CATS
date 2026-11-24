@@ -3,7 +3,7 @@ import type {RuntimeOverview} from './runtime';
 
 type ScanAssessment = {status: 'compliant' | 'noncompliant' | 'unverified'; reason: string; execution_id?: number;
   source?: 'local_scan' | 'publisher_capture'; scanned_at?: string};
-export type RuntimeCompliance = {status: 'approved' | 'excepted' | 'noncompliant' | 'unverified'; reason: string;
+export type RuntimeCompliance = {status: 'observed' | 'approved' | 'excepted' | 'noncompliant' | 'unverified'; reason: string;
   service_id?: number; release_id?: number; approval_id?: number; scan_assessment?: ScanAssessment};
 
 export type RuntimeIssue = {
@@ -14,6 +14,12 @@ export type RuntimeIssue = {
 export type IssueFilters = {environmentId: number | null; namespace: string; code: string};
 
 const reasons: Record<string, string> = {
+  unassigned_application: 'This application has no registered service.',
+  unexpected_component: 'The running component is absent from the approved release.',
+  missing_approved_component: 'The latest complete inventory is missing an approved component.',
+  component_digest_mismatch: 'The observed component uses a different digest from its approved inventory.',
+  development_inventory: 'Observed in development.',
+  validation_inventory: 'Observed in validation.',
   approved: 'The observed digest matches a current Approved Release.',
   release_expired: 'The Cyber-approved release for this image has expired.',
   approval_window_elapsed: 'The approval window for this image has expired.',

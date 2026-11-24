@@ -128,6 +128,7 @@ def portal_https(work, address, ca, cert, key):
 
 def create_key(client, work):
     response = client.post("/api/runtime/environments", json={"name":"kind smoke", "kind":"kubernetes",
+                                                              "cluster_role":"development",
                                                               "service_scope":"all", "service_ids":[]})
     response.raise_for_status()
     env_id = response.json()["id"]
@@ -138,16 +139,27 @@ def create_key(client, work):
     return env_id, keyfile
 
 
-def db_identity():
+def db_identity(env_id, witness_uid, deployment_uid):
     from app.database import SessionLocal
+    from app.runtime_applications import RuntimeApplication
     from app.runtime_models import RuntimeAgent
     from sqlalchemy import select
     with SessionLocal() as db:
-        row = db.scalars(select(RuntimeAgent)).one()
-        return (row.id, row.source_id, row.token_hash), row.last_sequence
+        row = db.scalars(select(RuntimeAgent).where(RuntimeAgent.environment_id == env_id)).one()
+        applications = list(db.scalars(select(RuntimeApplication).where(
+            RuntimeApplication.environment_id == env_id, RuntimeApplication.present.is_(True),
+            RuntimeApplication.namespace.in_([WITNESS_NS, NAMESPACE]))))
+        identities = []
+        for uid, kind in ((witness_uid, "Pod"), (deployment_uid, "Deployment")):
+            matches = [app for app in applications if any(component["workload_uid"] == uid and
+                       component["workload_kind"] == kind and component["namespace_uid"] for component in app.components)]
+            if len(matches) != 1 or matches[0].service_id is not None:
+                raise RuntimeError(f"Expected one unassigned application for the observed {kind}")
+            identities.append((matches[0].id, matches[0].fingerprint))
+        return (row.id, row.source_id, row.token_hash, identities), row.last_sequence
 
 
-def wait_report(client, env_id, witness, collector_uid):
+def wait_report(client, env_id, witness, collector_uid, deployment_uid):
     witness_uid = witness["metadata"]["uid"]
     witness_image = witness["spec"]["containers"][0]["image"]
     observed_image = witness["status"]["containerStatuses"][0]["image"]
@@ -160,10 +172,11 @@ def wait_report(client, env_id, witness, collector_uid):
         if (len(report["agents"]) == 1 and report["agents"][0]["coverage"] == "fresh"
                 and any(r["namespace"] == WITNESS_NS and r["pod"] == "witness" and r["state"] == "running"
                         and r["uid"] == f"{witness_uid}:regular:witness" and r["image_ref"] in {witness_image, observed_image}
+                        and r["compliance"]["status"] == "observed"
                         for r in rows)
                 and any(r["namespace"] == NAMESPACE and r["state"] == "running"
                         and r["uid"] == f"{collector_uid}:regular:collector" for r in rows)):
-            return db_identity()
+            return db_identity(env_id, witness_uid, deployment_uid)
         time.sleep(2)
     raise RuntimeError("CATS did not report a fresh inventory containing the running witness and current collector Pod")
 
@@ -206,7 +219,9 @@ def main():
                     "--set-string", f"catsUrl={url.removeprefix('https://')}", "--set-file", f"linkingKey={keyfile}",
                     "--set-string", "caSecret=portal-ca", "--wait", "--timeout", "4m")
             original_uid = collector_uid()
-            original, sequence = wait_report(client, env_id, witness, original_uid)
+            deployment_uid = kube("-n", NAMESPACE, "get", "deployment/cats-runtime",
+                                  "-o", "jsonpath={.metadata.uid}", capture=True).strip()
+            original, sequence = wait_report(client, env_id, witness, original_uid, deployment_uid)
             # A replacement Pod must report from its retained PVC, even after
             # the setup key is gone. A new Pod UID proves the second report is fresh.
             kube("-n", NAMESPACE, "delete", "secret", "cats-runtime-link")
@@ -215,10 +230,10 @@ def main():
             restarted_uid = collector_uid()
             if restarted_uid == original_uid:
                 raise RuntimeError("Collector Pod was not replaced")
-            current, next_sequence = wait_report(client, env_id, witness, restarted_uid)
+            current, next_sequence = wait_report(client, env_id, witness, restarted_uid, deployment_uid)
             if current != original or next_sequence <= sequence:
-                raise RuntimeError("Collector identity or report sequence changed unexpectedly across rollout")
-            print("Helm enrollment, live namespace/image reporting, and persisted agent identity passed.")
+                raise RuntimeError("Agent identity, application inventory or report sequence changed unexpectedly across rollout")
+            print("Helm enrollment, owner discovery, application deduplication and persisted agent identity passed.")
 
 
 if __name__ == "__main__":

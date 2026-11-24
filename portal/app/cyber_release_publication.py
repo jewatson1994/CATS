@@ -30,6 +30,7 @@ from .models import PortalSetting
 from .release_documentation import canonical, registry_environment
 from .remediation_jobs import check_worker
 from .remediation_bundles import configured_material
+from .runtime_image_manifests import runtime_manifest_issue
 
 
 class PublicationError(ValueError):
@@ -167,7 +168,7 @@ class _Transport:
             path.write_bytes(content)
         return path
 
-    def graph(self, source, digest, target=None, depth=0, seen=None):
+    def graph(self, source, digest, target=None, depth=0, seen=None, *, runtime_image=False):
         check_worker()
         if depth > 32:
             raise PublicationValidationError("OCI graph nesting exceeds limit")
@@ -182,6 +183,10 @@ class _Transport:
         descriptor = {"digest": digest, "size": len(data),
                       "mediaType": document.get("mediaType") or headers.get_content_type()}
         self.retain(descriptor, data)
+        if runtime_image:
+            issue = runtime_manifest_issue(document, descriptor["mediaType"])
+            if issue:
+                raise PublicationValidationError(issue)
         children = document.get("manifests", [])
         if not isinstance(children, list):
             raise PublicationValidationError("Invalid OCI index")
@@ -441,7 +446,10 @@ def publish(db, approval, destination, checkpoint):
         artifacts = snapshot.get("artifacts")
         if not artifacts:
             raise PublicationValidationError("Frozen deployable inventory unavailable")
+        runtime_release = snapshot.get("runtime_evidence") is not None
         for item in artifacts:
+            if runtime_release and item.get("kind") == "image" and (item.get("path") or item.get("resolve_at_publication")):
+                raise PublicationValidationError("Runtime releases require an immutable source image manifest.")
             if item.get("path") and (item.get("kind") == "chart" or (item.get("kind") == "image" and item.get("format") == "docker-archive")):
                 _checked_file(item)
                 continue
@@ -512,6 +520,19 @@ def publish(db, approval, destination, checkpoint):
                     with ZipFile(bundle_path) as bundle:
                         if bundle.read('release-manifest.json') != verified['files']['release-manifest.json']:
                             raise PublicationValidationError('Retained bundle belongs to a different release')
+                        if runtime_release:
+                            layout = json.loads(bundle.read('oci/index.json'))
+                            media_types = {entry['digest']: entry['mediaType'] for entry in layout['manifests']}
+                            for artifact in artifacts:
+                                if artifact['kind'] == 'image':
+                                    digest = artifact['digest']
+                                    content = bundle.read('oci/blobs/sha256/' + digest[7:])
+                                    doc = json.loads(content)
+                                    if release_oci._digest(content) != digest:
+                                        raise PublicationValidationError('Retained runtime image integrity mismatch')
+                                    issue = runtime_manifest_issue(doc, doc.get('mediaType') or media_types.get(digest))
+                                    if issue:
+                                        raise PublicationValidationError(issue)
                     receipt = previous
                     # A worker can stop after retaining the complete package but
                     # before exposing its discovery tag. Reuse its exact signed
@@ -562,7 +583,10 @@ def publish(db, approval, destination, checkpoint):
                                 digest = release_oci._digest(content)
                                 receipt['resolved_images'][str(index)] = digest
                                 save()  # Retries must not resolve a moved tag again.
-                        descriptor = transport.graph(source, digest, target)
+                        if runtime_release and item["kind"] == "image":
+                            descriptor = transport.graph(source, digest, target, runtime_image=True)
+                        else:
+                            descriptor = transport.graph(source, digest, target)
                     name = f"artifact-{index}"
                     transport.entry(descriptor, name)
                     tag = f"approval-{approval.id}-{index + 1}"

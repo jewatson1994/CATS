@@ -15,7 +15,7 @@ from .release_validity import utc
 from . import runtime_routes as runtime
 
 router = APIRouter(prefix="/api/runtime", tags=["Runtime"])
-_REPORT_FIELDS = {"sequence", "observed_at", "complete", "errors", "workloads"}
+_REPORT_FIELDS = {"sequence", "observed_at", "complete", "errors", "workloads", "discovery_version"}
 _MAX_ROWS = 20000
 _MAX_BYTES = 16 * 1024 * 1024
 _MAX_PAGES = 64
@@ -57,7 +57,7 @@ def digest(value):
                                      ensure_ascii=True).encode()).hexdigest()
 
 
-@router.post("/reports/pages")
+@router.post("/reports/pages", openapi_extra=runtime.report_body_schema(512, _MAX_PAGES))
 async def receive_page(request: Request, db: Session = Depends(get_db)):
     """Keep a single pending snapshot per agent. Publish only a complete set of verified pages."""
     row, token_hash = runtime.authenticate(request, db)
@@ -80,8 +80,9 @@ def _persist_page(db, identity, token_hash, data):
     observed, _, _ = runtime.validate_report(report, timestamp)
     sequence = report["sequence"]
     observations = report["workloads"]
-    if not 1 <= len(observations) <= 512:
-        raise HTTPException(422, "Each runtime page requires 1 to 512 observations")
+    empty_snapshot = count == 1 and report.get("discovery_version") == 1 and report["complete"]
+    if len(observations) > 512 or (not observations and not empty_snapshot):
+        raise HTTPException(422, "Each runtime page requires 1 to 512 observations or a complete empty discovery snapshot")
     meta = {k: v for k, v in report.items() if k != "workloads"}
     meta_hash = digest(meta)
 

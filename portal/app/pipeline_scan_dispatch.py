@@ -191,7 +191,10 @@ def prepare_scan(db, service, job_id, work_dir, *, kind="auto", reference=None, 
         skipped, checksum = main._stage_scan_inputs(work_dir, job_id, images, charts, archive, compose, {},
             configured_certificates(db), [], project_submission=True)
     if uploaded.exists():
-        uploaded.unlink()
+        if kind == "helm-chart" and extension == ".tar.gz":
+            uploaded.rename(work_dir / "retained-chart.tgz")
+        else:
+            uploaded.unlink()
     return enqueue_job(db, job_id, {
         "job_id": job_id, "job_kind": "scan", "status": "queued", "phase": "queued", "input_digest": checksum,
         "ingest_service_id": service.service_key, "ingest_service_db_id": service.id, "ingest_service_version": version,

@@ -10,6 +10,13 @@ def active_service_predicate():
     return (Service.lifecycle_status == "active") & (func.coalesce(latest_action, "") != "archive")
 
 
+def create_owned_service(db, service_key, name, owning_group):
+    service = Service(service_key=service_key, name=name, lifecycle_status="active", groups=[owning_group])
+    db.add(service)
+    db.flush()
+    return service
+
+
 def require_owner(service):
     groups = list(service.groups)
     if len(groups) != 1:

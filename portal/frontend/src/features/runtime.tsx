@@ -5,7 +5,10 @@ import {visibleTimeout} from '../hooks/visibleTimer';
 import {RuntimeIssues, ScanCompliance, issueReason, type IssueFilters, type RuntimeCompliance, type RuntimeIssue} from './RuntimeIssues';
 import './runtime.css';
 
-type Environment = {id: number; name: string; kind: 'kubernetes' | 'docker'; service_ids: number[]; service_scope?: 'all' | 'selected'; created_at: string; can_manage?: boolean};
+type ClusterRole = 'unspecified' | 'development' | 'validation' | 'production';
+const roleLabels: Record<ClusterRole, string> = {unspecified: 'Unspecified', development: 'Development', validation: 'Validation', production: 'Production'};
+type EnvironmentSettings = {name: string; kind: 'kubernetes' | 'docker'; service_scope: 'all' | 'selected'; service_ids: number[]; cluster_role?: ClusterRole; discovery_group_id?: number | null};
+type Environment = {cluster_role?: ClusterRole; discovery_group_id?: number | null; id: number; name: string; kind: 'kubernetes' | 'docker'; service_ids: number[]; service_scope?: 'all' | 'selected'; created_at: string; can_manage?: boolean};
 type Coverage = 'never_reported' | 'fresh' | 'stale' | 'incomplete' | 'revoked';
 type DisplayCoverage = Coverage | 'checking' | 'unchecked';
 type Agent = {id: string; environment_id: number; name: string; source_id: string; version: string; enabled: boolean;
@@ -14,7 +17,7 @@ type Agent = {id: string; environment_id: number; name: string; source_id: strin
 type Workload = {pod?: string; workload_kind?: string; container_kind?: string; agent_id: string; environment_id: number; uid: string; namespace: string; workload: string; container: string;
   node: string; image_ref: string; image_id: string; state: string; chart_name: string; chart_version: string; helm_release: string; observed_at?: string | null;
   compliance: RuntimeCompliance};
-export type RuntimeOverview = {environments: Environment[]; agents: Agent[]; workloads: Workload[]; services: {id: number; name: string}[];
+export type RuntimeOverview = {groups?: {id: number; name: string}[]; environments: Environment[]; agents: Agent[]; workloads: Workload[]; services: {id: number; name: string}[];
   permissions: {manage: boolean}; inventory_truncated?: boolean; total_workloads?: number; next_offset?: number | null; total_issues?: number; next_issue_offset?: number | null; issues?: RuntimeIssue[];
   namespaces?: {environment_id: number; name: string; workload_count: number; issue_count: number}[];
   clusters?: {id: number; coverage: Coverage | 'unlinked'; workload_count: number; agent_count: number; namespace_count: number; issue_count: number; inventory_truncated?: boolean}[]};
@@ -24,19 +27,27 @@ const coverageTones: Record<DisplayCoverage, Tone> = {never_reported: 'neutral',
 const STALE_MS = 5 * 60 * 1000;
 const PAGE_SIZE = 200;
 const OVERVIEW_URL = `/api/runtime?limit=${PAGE_SIZE}&issue_limit=${PAGE_SIZE}`;
-const complianceLabels: Record<Workload['compliance']['status'], string> = {approved: 'Approved', excepted: 'Excepted', noncompliant: 'Noncompliant', unverified: 'Unverified'};
+const complianceLabels: Record<Workload['compliance']['status'], string> = {observed: 'Observed', approved: 'Approved', excepted: 'Excepted', noncompliant: 'Noncompliant', unverified: 'Unverified'};
 const dateText = (value: string | null | undefined) => value ? new Date(value).toLocaleString() : 'Not reported';
 const errorText = (error: unknown) => error instanceof Error ? error.message : 'The request could not be completed.';
 
-function EnvironmentForm({environment, services, busy, save, cancel}: {
-  environment?: Environment; services: RuntimeOverview['services']; busy: boolean;
-  save: (value: {name: string; kind: Environment['kind']; service_scope: 'all' | 'selected'; service_ids: number[]}) => Promise<void>; cancel: () => void;
+function EnvironmentForm({environment, services, groups, busy, save, cancel}: {
+  environment?: Environment; services: RuntimeOverview['services']; groups: NonNullable<RuntimeOverview['groups']>; busy: boolean;
+  save: (value: EnvironmentSettings) => Promise<void>; cancel: () => void;
 }) {
   const [name, setName] = useState(environment?.name || '');
   const [kind, setKind] = useState<Environment['kind']>(environment?.kind || 'kubernetes');
   const [scope, setScope] = useState<'all' | 'selected'>(environment ? environment.service_scope || 'selected' : 'all');
   const [serviceIds, setServiceIds] = useState<number[]>(environment?.service_ids || []);
-  function submit(event: FormEvent<HTMLFormElement>) {event.preventDefault(); if (name.trim() && (scope === 'all' || serviceIds.length) && !busy) void save({name: name.trim(), kind, service_scope: scope, service_ids: scope === 'all' ? [] : serviceIds});}
+  const [clusterRole, setClusterRole] = useState<ClusterRole>(environment?.cluster_role || 'unspecified');
+  const [discoveryGroup, setDiscoveryGroup] = useState<number | null>(environment?.discovery_group_id ?? null);
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (name.trim() && (scope === 'all' || serviceIds.length) && !busy) {
+      void save({name: name.trim(), kind, service_scope: scope, service_ids: scope === 'all' ? [] : serviceIds,
+        ...(kind === 'kubernetes' ? {cluster_role: clusterRole, discovery_group_id: discoveryGroup} : {})});
+    }
+  }
   return <section className="panel padded runtime-form" aria-label={environment ? 'Edit environment' : 'New environment'}>
     <h2>{environment ? 'Edit environment' : 'New environment'}</h2>
     <form onSubmit={submit}>
@@ -45,6 +56,14 @@ function EnvironmentForm({environment, services, busy, save, cancel}: {
       <label>Runtime type<select value={kind} disabled={!!environment || busy} onChange={event => setKind(event.target.value as Environment['kind'])}>
         <option value="kubernetes">Kubernetes</option><option value="docker">Docker</option>
       </select></label>
+      {kind === 'kubernetes' && <fieldset disabled={busy}><legend>Application discovery</legend>
+        <label>Cluster role<select value={clusterRole} onChange={event => setClusterRole(event.target.value as ClusterRole)}>
+          {Object.entries(roleLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select></label>
+        <label>Discovery group<select value={discoveryGroup ?? ''} onChange={event => setDiscoveryGroup(event.target.value ? Number(event.target.value) : null)}>
+          <option value="">Unassigned</option>{groups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
+        </select></label>
+      </fieldset>}
       <fieldset disabled={busy}><legend>Services in approval scope</legend>
         <label>Approval scope<select value={scope} onChange={event => setScope(event.target.value as 'all' | 'selected')}>
           <option value="all">All active CATS services</option><option value="selected">Selected services</option></select></label>
@@ -80,9 +99,9 @@ function LinkingInstructions({token, environment, close}: {token: LinkingKey; en
     {environment.kind === 'kubernetes' ? <>
       <h4>Install the Kubernetes agent</h4>
       <p>Save the key in a private file named <code>linking-key</code>. Set <code>CATS_URL</code> to the portal HTTPS address reachable from the cluster, then run this command with the packaged chart.</p>
-      <pre><code>{['helm upgrade --install cats-runtime ./cats-runtime-0.1.0.tgz', '  --namespace cats-runtime --create-namespace',
+      <pre><code>{['helm upgrade --install cats-runtime ./cats-runtime-0.2.0.tgz', '  --namespace cats-runtime --create-namespace',
         '  --set-string catsUrl="$CATS_URL"', '  --set-file linkingKey=./linking-key'].join(' \\\n')}</code></pre>
-      <p>For a published chart, replace the chart file with <code>oci://ghcr.io/jewatson1994/charts/cats-runtime --version 0.1.0</code>.</p>
+      <p>For a published chart, replace the chart file with <code>oci://ghcr.io/jewatson1994/charts/cats-runtime --version 0.2.0</code>.</p>
       <p>To keep the key out of Helm release history, provision a Secret in the release namespace with the field <code>linking-key</code> and replace the last flag with <code>--set-string linkingKeySecret=SECRET_NAME</code>. For private portal certificates, set <code>caSecret</code> to a Secret containing <code>ca.crt</code>.</p>
     </> : <p>On the Docker host, follow the systemd install in <code>runtime-agent/README.md</code> with the portal HTTPS address and this linking key.</p>}
     <p className="muted">After installation, the agent and its first report appear under this environment.</p>
@@ -207,10 +226,10 @@ export function Page({data}: {data: PageData}) {
   async function mutate<T>(url: string, value: unknown = {}, method = 'POST'): Promise<T> {
     return requestJson<T>(url, {method, headers: {'Content-Type': 'application/json', 'X-CSRF-Token': data.csrf_token || ''}, body: JSON.stringify(value)});
   }
-  async function saveEnvironment(value: {name: string; kind: Environment['kind']; service_scope: 'all' | 'selected'; service_ids: number[]}) {
+  async function saveEnvironment(value: EnvironmentSettings) {
     setBusy(true); setActionError(''); setMessage('');
     try {
-      const saved = await (form === 'edit' && selected ? mutate<Environment>(`/api/runtime/environments/${selected.id}`, {name: value.name, service_scope: value.service_scope, service_ids: value.service_ids}, 'PUT') : mutate<Environment>('/api/runtime/environments', value));
+      const saved = await (form === 'edit' && selected ? mutate<Environment>(`/api/runtime/environments/${selected.id}`, {name: value.name, service_scope: value.service_scope, service_ids: value.service_ids, cluster_role: value.cluster_role, discovery_group_id: value.discovery_group_id}, 'PUT') : mutate<Environment>('/api/runtime/environments', value));
       setOverview(previous => previous && {...previous, environments: previous.environments.some(environment => environment.id === saved.id)
         ? previous.environments.map(environment => environment.id === saved.id ? saved : environment) : [...previous.environments, saved]});
       setSelectedId(saved.id); setLinkingKey(null);
@@ -236,7 +255,7 @@ export function Page({data}: {data: PageData}) {
     {overview && loading && !loadError && <p role="status">Checking current coverage. Retained observations are shown until refresh completes.</p>}
     {actionError && <p role="alert" className="runtime-notice">{actionError}</p>}{message && <p role="status">{message}</p>}
     {!overview && loading && <p role="status">Loading runtime environments…</p>}
-    {form && overview && <EnvironmentForm key={`${form}-${selected?.id}`} environment={form === 'edit' ? selected : undefined} services={overview.services} busy={busy} save={saveEnvironment} cancel={() => setForm(null)}/>}
+    {form && overview && <EnvironmentForm key={`${form}-${selected?.id}`} environment={form === 'edit' ? selected : undefined} services={overview.services} groups={overview.groups || []} busy={busy} save={saveEnvironment} cancel={() => setForm(null)}/>}
     {overview && <nav className="runtime-view-nav" aria-label="Runtime views">
       {(['clusters', 'agents', 'issues'] as const).map(view => <button key={view} type="button" disabled={busy}
         className="secondary-button" aria-pressed={tab === view} onClick={() => changeTab(view)}>
@@ -266,7 +285,7 @@ export function Page({data}: {data: PageData}) {
         </button>;}) : <p>Add an environment, then link an agent to start collecting observations.</p>}
       </aside>
       {selected && <div className="runtime-detail">
-        <section className="panel padded" aria-label="Environment details"><div className="runtime-section-heading"><div><h2>{selected.name}</h2><p className="muted">{selected.kind === 'kubernetes' ? 'Kubernetes cluster' : 'Docker host'}</p></div>
+        <section className="panel padded" aria-label="Environment details"><div className="runtime-section-heading"><div><h2>{selected.name}</h2><p className="muted">{selected.kind === 'kubernetes' ? 'Kubernetes cluster' : 'Docker host'}</p>{selected.kind === 'kubernetes' && <p>Cluster role · {roleLabels[selected.cluster_role || 'unspecified']}{selected.discovery_group_id != null && <> · Discovery group {overview.groups?.find(group => group.id === selected.discovery_group_id)?.name || selected.discovery_group_id}</>}</p>}</div>
           {selectedManage && <div className="runtime-actions"><button type="button" className="secondary-button" disabled={busy} onClick={() => {setForm('edit'); setLinkingKey(null);}}>Edit environment</button>
             <button type="button" disabled={busy || (selected.service_scope !== 'all' && !selected.service_ids.length)} onClick={() => void linkAgent()}>Link agent</button></div>}</div>
           <p><strong>Approval scope:</strong> {selected.service_scope === 'all' ? 'All active CATS services' : selected.service_ids.length ? selected.service_ids.map(id => overview.services.find(service => service.id === id)?.name || `Service ${id}`).join(', ') : 'No services selected — workload approval is unverified.'}</p>
@@ -307,7 +326,7 @@ export function Page({data}: {data: PageData}) {
                 <td><StatusBadge value={coverage || 'unavailable'} label={coverage ? coverageLabels[coverage] : 'Coverage unavailable'} tone={coverage ? coverageTones[coverage] : 'neutral'}/>
                   <span>{dateText(workload.observed_at ?? agent?.inventory_observed_at ?? agent?.observed_at)}</span></td>
                 <td><StatusBadge value={status} label={complianceLabels[status]} tone={tone}/>{!current && <span>Retained observation only</span>}<span>{issueReason(workload.compliance.reason)}</span></td>
-                <td><ScanCompliance assessment={workload.compliance.scan_assessment} current={current}/></td>
+                <td>{status === 'observed' && !workload.compliance.scan_assessment ? 'No scan assessment' : <ScanCompliance assessment={workload.compliance.scan_assessment} current={current}/>}</td>
                 <td>{workload.chart_name || workload.helm_release ? <><span>{[workload.chart_name, workload.chart_version].filter(Boolean).join(' ') || 'Chart not reported'}</span><span>{workload.helm_release || 'Release not reported'}</span><span className="muted">Unverified provenance</span></> : <span>Not reported</span>}</td>
               </tr>;
             })}</tbody></table></div>}

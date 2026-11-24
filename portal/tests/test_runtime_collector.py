@@ -59,7 +59,7 @@ def test_pods_include_container_kinds_actual_states_and_only_allowlisted_metadat
     assert rows[0]["workload_kind"] == "ReplicaSet" and rows[0]["pod"] == "pod-name"
     assert [row["container_kind"] for row in rows] == ["regular", "regular", "init", "ephemeral"]
     assert all(row["image_id"] == "" for row in rows if row["state"] != "running")
-    assert all(set(row) == set(runtime.FIELDS) for row in rows)
+    assert all(set(runtime.BASE_FIELDS) <= set(row) <= set(runtime.FIELDS) for row in rows)
     assert "do-not-upload" not in json.dumps(rows)
 
 
@@ -135,6 +135,8 @@ class KubernetesAPI:
         self.pages, self.calls = list(pages), []
 
     def request(self, method, path, body=None, token=None):
+        if not path.startswith("/api/v1/pods?"):
+            return {"items": [], "metadata": {"resourceVersion": "10"}}
         self.calls.append((method, path, token))
         response = self.pages.pop(0)
         if isinstance(response, Exception):

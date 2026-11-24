@@ -12,6 +12,82 @@ const distribution = {id:'dist-1', name:'Regional gateway', inventory_id:'inv-2'
   charts:[{id:'cache', label:'Cache', version:'1', reference:'oci://reg/cache',source_path:'charts/cache'},
     {id:'worker', label:'Worker', version:'2', reference:'oci://reg/worker',source_path:'charts/worker'}]};
 
+it('shows catalog identities and service roles for assessed digests', async () => {
+  vi.mocked(requestJson).mockResolvedValue({...ready, runtime_candidate:{id:12,status:'draft'},
+    runtime_evidence:{assessments:[
+      {reference:'registry/api',status:'complete',catalog_matches:[{artifact_id:77,media_type:'application/octet-stream',
+        platform:'unknown',roles:['release','source']}]},
+      {name:'api chart',status:'complete',catalog_matches:[]}, {name:'pending image',status:'queued'}
+    ]}});
+  render(<RequestApproval data={data} serviceKey="sample" runtimeCandidateId="12"/>);
+  fireEvent.click(await screen.findByText('Artifact assessments and SBOMs'));
+  const table = within(screen.getByRole('table', {name:'Service catalog entries with the assessed digest'}));
+  expect(table.getByRole('columnheader', {name:'Catalog platform'})).toBeVisible();
+  expect(table.getByRole('row', {name:/#77 application\/octet-stream unknown release, source/})).toBeVisible();
+  expect(screen.getAllByText('No service catalog entries match this assessed digest.')).toHaveLength(1);
+});
+
+it('submits the reviewed runtime evidence using its candidate and digest', async () => {
+  vi.mocked(requestJson).mockResolvedValueOnce({...ready, can_request:true, review_digest:'sha256:review',
+    runtime_candidate:{id:12, status:'returned', approval_id:11, decision_rationale:'Update the scan'},
+    runtime_evidence:{source:{cluster:'Validation', namespace:'team-one'}, fingerprint:'sha256:inventory',
+      revision:3, proposed_version:'2.1'}}).mockResolvedValueOnce({id:14});
+  render(<RequestApproval data={data} serviceKey="sample" runtimeCandidateId="12"/>);
+  await screen.findByText('Validation');
+  expect(screen.getByText(/Update the scan/)).toBeVisible();
+  expect(screen.getByRole('link', {name:'Previous review'})).toHaveAttribute('href','/cyber-approvals?id=11');
+  expect(screen.queryByLabelText('Release variant')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', {name:'Submit for Cyber Review'}));
+  await screen.findByRole('link', {name:'Review request #14'});
+  expect(JSON.parse(String(vi.mocked(requestJson).mock.calls[1][1]?.body))).toEqual(
+    {service_key:'sample',variant:'current_service',runtime_candidate_id:12,review_digest:'sha256:review'});
+});
+
+it('links a submitted runtime candidate directly to its immutable review', async () => {
+  vi.mocked(requestJson).mockResolvedValue({runtime_candidate:{id:12,status:'submitted',approval_id:13},ready:false,can_request:false});
+  render(<RequestApproval data={data} serviceKey="sample" runtimeCandidateId="12"/>);
+  expect(await screen.findByRole('link',{name:'Open submitted snapshot and Cyber decision'})).toHaveAttribute('href','/cyber-approvals?id=13');
+  expect(screen.queryByRole('button',{name:'Submit for Cyber Review'})).not.toBeInTheDocument();
+});
+
+it('hides runtime submission when the service only grants classic approval requests', async () => {
+  vi.mocked(requestJson).mockResolvedValue({...ready, can_request:false, runtime_candidate:{id:12, status:'draft'}});
+  render(<RequestApproval data={{...data, can_request:true}} serviceKey="sample" runtimeCandidateId="12"/>);
+  await screen.findByText('You do not have permission to request Cyber approval for this service.');
+  expect(screen.queryByRole('button', {name:'Submit for Cyber Review'})).not.toBeInTheDocument();
+});
+
+it('shows only retained inventory and audit events for a superseded unsubmitted draft', async () => {
+  vi.mocked(requestJson).mockResolvedValue({ready:false, can_request:false,
+    historical_inventory:{source:{cluster:'Validation'}, revision:1, fingerprint:'original-fingerprint',
+      proposed_version:'1.2', created_at:'2026-11-20T14:00:00Z', applications:[], images:[], charts:[],
+      history:[{action:'runtime.candidate.superseded',recorded_at:'2026-11-20T15:00:00Z',actor:'System'}]}});
+  render(<RequestApproval data={data} serviceKey="sample" runtimeCandidateId="12"/>);
+  await screen.findByRole('heading', {name:'Superseded runtime candidate for sample'});
+  expect(screen.getByText('original-fingerprint')).toBeVisible();
+  expect(screen.getByRole('heading', {name:'Candidate history'})).toBeVisible();
+  expect(screen.getByText(/Superseded · System/i)).toBeVisible();
+  expect(screen.queryByRole('button', {name:'Submit for Cyber Review'})).not.toBeInTheDocument();
+  expect(screen.queryByText(/No findings recorded/)).not.toBeInTheDocument();
+});
+
+it('returns the frozen runtime submission with a reason and retains unknown comparison results', async () => {
+  const row = {id:12, status:'pending', can_decide:true, service_key:'sample', runtime_candidate_id:3,
+    snapshot:{runtime_evidence:{source:{cluster:'Validation'}, findings:[], comparison:{
+      baseline_available:true, revision_id:9, added:[], removed:null, updated:[], vulnerabilities_comparable:false}}}};
+  vi.mocked(requestJson).mockResolvedValue(row);
+  render(<ApprovalDetail data={data} id="12"/>);
+  await screen.findByRole('heading',{name:'Runtime inventory and assessment'});
+  expect(screen.getByText(/removals unknown/)).toBeVisible();
+  fireEvent.change(screen.getByLabelText('Decision'), {target:{value:'returned'}});
+  const button = screen.getByRole('button',{name:'Return for changes'});
+  expect(button).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('Decision rationale'), {target:{value:'Supply the missing artifact evidence'}});
+  fireEvent.click(button);
+  await waitFor(() => expect(requestJson).toHaveBeenCalledWith('/api/cyber-approvals/12/decision',expect.objectContaining({
+    body:JSON.stringify({decision:'returned',rationale:'Supply the missing artifact evidence'})})));
+});
+
 it('requests the exact saved distribution and its reviewed scan execution', async () => {
   vi.mocked(requestJson).mockResolvedValueOnce({...ready, distribution, source_execution_id:91}).mockResolvedValueOnce({id:20});
   render(<RequestApproval data={data} serviceKey="sample" distributionId="dist-1"/>);

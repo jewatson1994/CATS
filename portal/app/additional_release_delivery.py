@@ -78,6 +78,9 @@ def freeze_target(db, auth, service_id, target_id, primary):
 
 def can_retry(auth, approval, kind):
     permitted = auth.has('approval.decide', approval.service_id) or selectable(auth, approval.service_id)
+    if approval.snapshot.get('runtime_evidence'):
+        from .cyber_approvals import can_review_release
+        permitted = can_review_release(auth, approval)
     if not permitted or approval.status != 'approved':
         return False
     if kind == 'revocation':

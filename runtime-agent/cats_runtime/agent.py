@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import http.client
 import json
@@ -21,18 +22,24 @@ import urllib.parse
 import urllib.request
 import uuid
 
-from . import __version__
+from . import __version__, kube_workloads
 from .report_pages import MAX_REPORT_BYTES, MAX_WORKLOADS, send_report
 
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+MAX_OFFLINE_REPORTS = 8
+MAX_OUTBOX_BYTES = 64 * 1024 * 1024
 COLLECTION_BUDGET_SECONDS = 120
 DIGEST = re.compile(r"sha256:[a-fA-F0-9]{64}\Z")
 REPOSITORY_PART = re.compile(r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*\Z")
 REGISTRY = re.compile(r"(?:[a-zA-Z0-9]+(?:[.-][a-zA-Z0-9-]+)*|\[[a-fA-F0-9:]+\])(?::[0-9]{1,5})?\Z")
-FIELDS = ("uid", "namespace", "pod", "workload", "workload_kind", "container", "container_kind", "node", "image_ref",
+BASE_FIELDS = ("uid", "namespace", "pod", "workload", "workload_kind", "container", "container_kind", "node", "image_ref",
           "image_id", "state", "chart_name", "chart_version", "helm_release")
+DISCOVERY_FIELDS = ("namespace_uid", "pod_uid",
+          "workload_uid", "controller_uid", "controller_kind", "controller_name", "helm_namespace", "app_name",
+          "app_instance", "app_part_of", "app_version", "service_hint", "chart_digest", "desired_image")
+FIELDS = BASE_FIELDS + DISCOVERY_FIELDS
 STATES = {"running", "waiting", "terminated", "unknown", "paused", "restarting",
-          "exited", "created", "dead", "removing"}
+          "exited", "created", "dead", "removing", "desired"}
 
 
 class AgentError(Exception):
@@ -117,6 +124,38 @@ class HTTPSClient:
             raise AgentError("transport_failed") from None
 
 
+    def watch_change(self, resource_path, version, seconds, token):
+        """A metadata-only change signal. A fresh LIST supplies the authoritative snapshot."""
+        query = urllib.parse.urlencode({"watch": "true", "resourceVersion": version,
+                                       "timeoutSeconds": seconds, "allowWatchBookmarks": "false"})
+        request = urllib.request.Request(f"{self.base_url}{resource_path}?{query}", headers={
+            "Authorization": "Bearer " + token,
+            "Accept": "application/json;as=PartialObjectMetadata;g=meta.k8s.io;v=v1, application/json;q=0.8",
+            "User-Agent": f"cats-runtime/{__version__}",
+        })
+        try:
+            with self.opener.open(request, timeout=seconds + 3) as response:
+                raw = response.readline(MAX_RESPONSE_BYTES + 1)
+                if not raw:
+                    return False
+                if len(raw) > MAX_RESPONSE_BYTES:
+                    raise AgentError("watch_event_too_large")
+                event = json.loads(raw)
+                if event.get("type") in ("ADDED", "MODIFIED", "DELETED"):
+                    return True
+                if event.get("type") == "ERROR":
+                    if (event.get("object") or {}).get("code") == 410:
+                        return True
+                    raise AgentError("kubernetes_watch_failed")
+                return False
+        except urllib.error.HTTPError as exc:
+            if exc.code == 410:
+                return True
+            raise AgentError(f"watch_http_{exc.code}") from None
+        except (urllib.error.URLError, OSError, ValueError, AttributeError, http.client.HTTPException):
+            raise AgentError("kubernetes_watch_failed") from None
+
+
 class StateStore:
     """One owner per state directory; atomically persist credentials and pending work."""
 
@@ -163,14 +202,20 @@ class StateStore:
         try:
             os.chmod(self.path, 0o600)
             with self.path.open("rb") as stream:
-                raw = stream.read(MAX_REPORT_BYTES + 65537)
-            if len(raw) > MAX_REPORT_BYTES + 65536:
+                raw = stream.read(MAX_OUTBOX_BYTES + 65537)
+            if len(raw) > MAX_OUTBOX_BYTES + 65536:
                 raise ValueError()
             state = json.loads(raw)
             uuid.UUID(state["source_id"])
             if type(state["next_sequence"]) is not int or state["next_sequence"] < 1:
                 raise ValueError()
             if state.get("pending") and state["pending"]["sequence"] != state["next_sequence"]:
+                raise ValueError()
+            offline = state.get("offline", [])
+            if (not isinstance(offline, list) or len(offline) > MAX_OFFLINE_REPORTS
+                    or (offline and not state.get("pending"))
+                    or any(report["sequence"] != state["next_sequence"] + i
+                           for i, report in enumerate(offline, start=1))):
                 raise ValueError()
             if "last_acked_observed_at" in state and datetime.fromisoformat(state["last_acked_observed_at"]).utcoffset() is None:
                 raise ValueError()
@@ -202,17 +247,18 @@ def record(**values):
     result = {}
     for field in FIELDS:
         value = values.get(field, "")
-        limit = 512 if field == "uid" else 1024 if field in ("image_ref", "image_id") else 255
+        limit = 512 if field == "uid" else 1024 if field in ("image_ref", "image_id", "desired_image") else 255
         if (not isinstance(value, str) or len(value) > limit or
                 any(ord(char) < 32 for char in value)):
             raise AgentError("inventory_field_invalid")
-        if field == "image_ref" and value:
+        if field in ("image_ref", "desired_image") and value:
             # Runtimes can echo an invalid submitted image name containing URL
             # credentials. Preserve the container observation without that text.
             if (not re.fullmatch(r"[A-Za-z0-9_.:/@+\[\]-]+", value) or "://" in value
                     or ("@" in value and not re.fullmatch(r"[^@]+@sha256:[0-9a-fA-F]{64}", value))):
                 value = ""
-        result[field] = value
+        if value or field in BASE_FIELDS:
+            result[field] = value
     if any(not result[field].strip() for field in ("uid", "container", "state")):
         raise AgentError("inventory_required_field_missing")
     if result["state"] not in STATES:
@@ -281,14 +327,12 @@ def pod_records(pod):
     if (not isinstance(metadata.get("uid"), str) or not metadata["uid"] or
             not isinstance(spec.get("containers"), list) or not spec["containers"]):
         raise AgentError("kubernetes_pod_invalid")
-    labels = metadata.get("labels", {})
-    owners = metadata.get("ownerReferences", [])
-    controllers = [owner for owner in owners if owner.get("controller") is True]
+    hints = kube_workloads.attribution(metadata)
     pod_name = metadata.get("name", "")
-    owner = controllers[0] if len(controllers) == 1 else {}
+    owner = kube_workloads.controlling_owner(metadata)
     workload = owner.get("name", pod_name)
     workload_kind = owner.get("kind", "") if owner else "Pod"
-    chart = re.fullmatch(r"(.+?)-(\d+\.\d+.*)", labels.get("helm.sh/chart", ""))
+    direct = kube_workloads.owner_fields(metadata)
     for kind, spec_key, status_key in (
             ("regular", "containers", "containerStatuses"),
             ("init", "initContainers", "initContainerStatuses"),
@@ -313,26 +357,72 @@ def pod_records(pod):
                          workload=workload, workload_kind=workload_kind, container_kind=kind,
                          container=name, node=spec.get("nodeName", ""),
                          image_ref=image_ref, image_id=image_id,
-                         state=state,
-                         chart_name=chart.group(1) if chart else "",
-                         chart_version=chart.group(2) if chart else "",
-                         helm_release=labels.get("app.kubernetes.io/instance", ""))
+                         state=state, pod_uid=metadata["uid"],
+                         workload_uid=owner.get("uid", "") if owner else metadata["uid"],
+                         desired_image=container.get("image", ""), **direct, **hints)
 
 
 class KubernetesCollector:
+    discovery_version = 1
+
     def __init__(self, client, token_file):
         self.client, self.token_file = client, token_file
+        self.versions = {}
 
-    def collect(self):
+    def bind_cluster(self, store, state):
+        # kube-system is created with the cluster. Pin its UID independently of
+        # the agent UUID, so multiple installations can keep separate credentials.
+        page = self.client.request("GET", "/api/v1/namespaces?fieldSelector=metadata.name%3Dkube-system&limit=1",
+                                   token=read_secret(self.token_file))
+        items = page.get("items") if isinstance(page, dict) else None
+        meta = items[0].get("metadata") if isinstance(items, list) and len(items) == 1 and isinstance(items[0], dict) else None
+        if not isinstance(meta, dict) or meta.get("name") != "kube-system":
+            raise AgentError("kubernetes_cluster_identity_unavailable")
+        uid = meta.get("uid")
+        if not isinstance(uid, str) or not re.fullmatch(r"[a-zA-Z0-9._-]{1,255}", uid):
+            raise AgentError("kubernetes_cluster_identity_unavailable")
+        if "kubernetes_cluster_uid" in state:
+            if state["kubernetes_cluster_uid"] != uid:
+                raise AgentError("kubernetes_cluster_identity_mismatch")
+            return
+        store.save({**state, "kubernetes_cluster_uid": uid})
+        state["kubernetes_cluster_uid"] = uid
+
+    def wait_for_change(self, interval):
+        # Short parallel watches bound reconciliation latency without long-lived
+        # threads or carrying unverified partial updates between reports.
+        if not self.versions:
+            time.sleep(interval)
+            return
+        deadline = time.monotonic() + interval
+        with ThreadPoolExecutor(max_workers=len(self.versions)) as pool:
+            while (remaining := deadline - time.monotonic()) >= 1:
+                started = time.monotonic()
+                window = max(1, min(8, int(remaining)))
+                try:
+                    token = read_secret(self.token_file)
+                    watches = [pool.submit(self.client.watch_change, kube_workloads.RESOURCES[kind], version,
+                                           window, token) for kind, version in self.versions.items()]
+                    changed = any([watch.result() for watch in watches])
+                except AgentError as exc:
+                    print("cats-runtime: " + exc.code, file=sys.stderr, flush=True)
+                    time.sleep(max(0, deadline - time.monotonic()))
+                    return
+                if changed:
+                    # Coalesce bursts during a rollout and bound API/report traffic.
+                    time.sleep(max(0, min(5, remaining) - (time.monotonic() - started)))
+                    return
+                time.sleep(max(0, window - (time.monotonic() - started)))
+
+    def list_resource(self, kind, deadline):
         records, errors, continuation, seen, pages = [], [], "", set(), set()
         snapshot_version = None
         limit, restarts = 100, 0
         resized_cursor = False
-        deadline = time.monotonic() + COLLECTION_BUDGET_SECONDS
         try:
             while True:
                 check_collection_deadline(deadline)
-                path = f"/api/v1/pods?limit={limit}"
+                path = f"{kube_workloads.RESOURCES[kind]}?limit={limit}"
                 if continuation:
                     path += "&continue=" + urllib.parse.quote(continuation, safe="")
                 try:
@@ -360,16 +450,25 @@ class KubernetesCollector:
                 if continuation and version != snapshot_version:
                     raise AgentError("kubernetes_snapshot_changed")
                 snapshot_version = version
-                for pod in page["items"]:
-                    for item in pod_records(pod):
-                        if len(records) >= MAX_WORKLOADS:
-                            raise AgentError("inventory_limit")
-                        if item["uid"] in seen:
-                            raise AgentError("inventory_duplicate")
-                        seen.add(item["uid"])
-                        records.append(item)
+                for obj in page["items"]:
+                    uid = obj["metadata"]["uid"]
+                    if uid in seen:
+                        raise AgentError("inventory_duplicate")
+                    seen.add(uid)
+                    if len(seen) > MAX_WORKLOADS:
+                        raise AgentError("inventory_limit")
+                    if kind == "Pod":
+                        records.extend(pod_records(obj))
+                    elif kind == "Namespace":
+                        records.append((obj["metadata"]["name"], uid))
+                    else:
+                        records.append(kube_workloads.controller(kind, obj))
+                    if len(records) > MAX_WORKLOADS:
+                        raise AgentError("inventory_limit")
                 next_page = page["metadata"].get("continue", "")
                 if next_page == "":
+                    if isinstance(version, str) and 0 < len(version) <= 1024:
+                        self.versions[kind] = version
                     break
                 if not isinstance(next_page, str) or len(next_page) > 8192 or next_page in pages or len(pages) >= 1000:
                     raise AgentError("kubernetes_pagination_invalid")
@@ -380,6 +479,46 @@ class KubernetesCollector:
         except (KeyError, TypeError, AttributeError, ValueError):
             errors.append("kubernetes_inventory_invalid")
         return records, errors
+
+
+    def collect(self):
+        self.versions = {}
+        deadline = time.monotonic() + COLLECTION_BUDGET_SECONDS
+        pods, controllers, namespaces = [], {}, {}
+        try:
+            for kind in kube_workloads.RESOURCES:
+                items, errors = self.list_resource(kind, deadline)
+                if kind == "Pod":
+                    pods = items
+                if errors:
+                    self.versions.clear()
+                    return pods, errors
+                if kind == "Namespace":
+                    namespaces = dict(items)
+                elif kind != "Pod":
+                    controllers.update((item.identity, item) for item in items)
+                if len(controllers) + len(pods) > MAX_WORKLOADS:
+                    raise AgentError("inventory_limit")
+            for row in pods:
+                row["namespace_uid"] = namespaces.get(row["namespace"], "")
+                kube_workloads.resolve(row, controllers)
+                # Validate metadata inherited from owners under the same allowlist as Pod metadata.
+                validated = record(**row)
+                row.clear()
+                row.update(validated)
+            for row in kube_workloads.template_rows(controllers, namespaces, record):
+                if len(pods) >= MAX_WORKLOADS:
+                    raise AgentError("inventory_limit")
+                pods.append(row)
+            if len({row["uid"] for row in pods}) != len(pods):
+                raise AgentError("inventory_duplicate")
+            return pods, []
+        except AgentError as exc:
+            error = exc.code
+        except (KeyError, TypeError, AttributeError, ValueError):
+            error = "kubernetes_inventory_invalid"
+        self.versions.clear()
+        return pods, [error]
 
 
 class UnixHTTPConnection(http.client.HTTPConnection):
@@ -500,6 +639,8 @@ def make_report(collector, sequence, last_acked_observed_at=None):
         errors.append("inventory_limit")
     report = {"sequence": sequence, "observed_at": observed.isoformat(),
               "complete": not errors, "errors": errors, "workloads": workloads}
+    if getattr(collector, "discovery_version", None) == 1:
+        report["discovery_version"] = 1
     if len(encode_json(report)) > MAX_REPORT_BYTES:
         report.update(complete=False, errors=sorted(set(errors + ["report_size_limit"])), workloads=[])
     return report
@@ -552,6 +693,42 @@ def enroll(store, state, client, name, linking_key_file, kind="docker"):
     return state
 
 
+def inventory_signature(report):
+    """Ignore pod UID, node and replica churn when queuing disconnected changes."""
+    fields = ("namespace", "namespace_uid", "workload_kind", "workload", "workload_uid",
+              "app_name", "app_instance", "app_part_of", "app_version", "service_hint", "chart_name",
+              "chart_version", "chart_digest", "helm_release", "helm_namespace", "container_kind",
+              "container", "desired_image", "image_ref", "image_id", "state")
+    return (report.get("complete"), tuple(report.get("errors", [])),
+            {tuple(row.get(key, "") for key in fields) for row in report["workloads"]})
+
+
+def capture_offline(store, state, collector):
+    pending = state["pending"]
+    offline = list(state.get("offline", []))
+    previous = offline[-1] if offline else pending
+    try:
+        latest = make_report(collector, previous["sequence"] + 1, previous["observed_at"])
+    except AgentError as exc:
+        if exc.code == "clock_behind_last_report":
+            return  # A clock adjustment must never block replay of persisted reports.
+        raise
+    if inventory_signature(previous) == inventory_signature(latest):
+        return
+    size = len(encode_json(pending)) + len(encode_json(latest))
+    budget = MAX_OUTBOX_BYTES - 1024
+    while offline and (len(offline) >= MAX_OFFLINE_REPORTS or
+                       size + sum(len(encode_json(report)) for report in offline) > budget):
+        # The pending report may already have reached CATS. Only coalesce
+        # unsent entries; keep their earliest transitions and the latest state.
+        offline.pop()
+        print("cats-runtime: offline_buffer_coalesced", file=sys.stderr, flush=True)
+    latest["sequence"] = pending["sequence"] + len(offline) + 1
+    offline.append(latest)
+    store.save({**state, "offline": offline})
+    state["offline"] = offline
+
+
 def send_once(store, state, client, collector):
     if not state.get("agent_token") or state.get("cats_url") != client.base_url:
         raise AgentError("enrollment_required")
@@ -563,7 +740,9 @@ def send_once(store, state, client, collector):
     if (not isinstance(ack, dict) or ack.get("accepted") is not True or type(ack.get("sequence")) is not int
             or ack["sequence"] != state["next_sequence"]):
         raise AgentError("report_ack_invalid")
-    updated = {**state, "next_sequence": state["next_sequence"] + 1, "pending": None,
+    offline = state.get("offline", [])
+    updated = {**state, "next_sequence": state["next_sequence"] + 1,
+               "pending": offline[0] if offline else None, "offline": offline[1:],
                "last_acked_observed_at": state["pending"]["observed_at"]}
     store.save(updated)
     state.update(updated)
@@ -594,34 +773,45 @@ def main(argv=None):
         client = HTTPSClient(args.cats_url, args.ca_file)
         with StateStore(args.state_dir) as store:
             state = store.load()
-            if args.mode == "link":
-                enroll(store, state, client, args.name, args.linking_key_file, args.source)
-                print("cats-runtime: linked", flush=True)
-                return 0
             collector = (KubernetesCollector(HTTPSClient(args.kubernetes_url, args.kubernetes_ca_file),
                                              args.kubernetes_token_file) if args.source == "kubernetes"
                          else DockerCollector(DockerClient(args.docker_socket)))
             failures = 0
+            cluster_verified = False
             while True:
                 try:
+                    if args.source == "kubernetes" and not cluster_verified:
+                        collector.bind_cluster(store, state)
+                        cluster_verified = True
                     linked = bool(state.get("agent_token"))
                     enroll(store, state, client, args.name, args.linking_key_file, args.source)
-                    if not linked:
+                    if not linked or args.mode == "link":
                         print("cats-runtime: linked", flush=True)
+                    if args.mode == "link":
+                        return 0
+                    if args.source == "kubernetes" and state.get("pending"):
+                        capture_offline(store, state, collector)
                     send_once(store, state, client, collector)
+                    while state.get("pending"):
+                        send_once(store, state, client, collector)
                     failures = 0
                     print("cats-runtime: report_accepted", flush=True)
                 except AgentError as exc:
                     print("cats-runtime: " + exc.code, file=sys.stderr, flush=True)
                     failures += 1
-                    if args.once or exc.code in ("http_400", "http_401", "http_403", "http_413", "http_422",
+                    if args.once or args.mode == "link" or exc.code in ("kubernetes_cluster_identity_mismatch", "http_400", "http_401", "http_403", "http_413", "http_422",
                             "enrollment_url_mismatch", "enrollment_source_mismatch", "enrollment_state_mismatch",
                             "linking_key_file_required", "agent_name_required", "enrollment_required"):
                         return 1
                 if args.once:
                     return 0
-                time.sleep(min(300, 5 * 2 ** min(failures - 1, 6)) if failures
-                           else state.get("report_interval_seconds", 60))
+                interval = state.get("report_interval_seconds", 60)
+                if failures:
+                    interval = min(300, 5 * 2 ** min(failures - 1, 6))
+                if args.source == "kubernetes" and state.get("agent_token"):
+                    collector.wait_for_change(min(interval, state.get("report_interval_seconds", 60)))
+                else:
+                    time.sleep(interval)
     except KeyboardInterrupt:
         return 0
     except AgentError as exc:
