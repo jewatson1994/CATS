@@ -1,0 +1,128 @@
+name: Test and package the CATS distribution
+
+on:
+  workflow_call:
+    inputs:
+      publish:
+        type: boolean
+        default: false
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - name: Set release image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/cats-tool" >> "$GITHUB_ENV"
+      - name: Verify release versions and application tests
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          python -m pip install -r portal/requirements-dev.txt
+          python .github/scripts/runtime-chart.py verify
+          python portal/tests/test_action_supervisor.py
+          python -m pytest -q scanning-main/tests/test_image_archive_lifecycle.py
+          python -m pytest --noconftest -q portal/tests/test_runtime_collector.py
+          python runtime-agent/tests/test_chart.py
+      - name: Verify portal enrollment, runtime discovery and release approval
+        working-directory: portal
+        run: |
+          python -m pytest -q tests/test_runtime_routes.py tests/test_runtime_policy.py \
+            tests/test_runtime_report_pages.py tests/test_runtime_release_expiration.py tests/test_runtime_integration.py \
+            tests/test_runtime_discovery_collector.py tests/test_runtime_applications.py tests/test_runtime_candidates.py \
+            tests/test_runtime_assessment_catalog.py tests/test_runtime_resolution_diagnostics.py tests/test_runtime_release_review.py \
+            tests/test_runtime_production_components.py
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v3
+      - name: Reserve disk for image builds and the kind image import
+        run: |
+          # Hosted runner toolchains unused by CATS. The scanner ships an offline database.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h /
+      - name: Build the two platforms of the release image
+        run: |
+          docker build --pull \
+            --build-arg GRYPE_DB_REFRESH="$GITHUB_RUN_ID" -f cats-scanner/Dockerfile -t catscan-base:ci .
+          docker build --build-arg CATSCAN_BASE_IMAGE=catscan-base:ci --build-arg CATS_VERSION="$GITHUB_SHA" \
+            -f cats-image/Dockerfile.all-in-one -t "$IMAGE:$GITHUB_SHA" .
+          docker buildx build --platform linux/arm64 --load --provenance=false --build-arg CATS_VERSION="$GITHUB_SHA" \
+            -f cats-image/Dockerfile.runtime-arm64 -t cats-ci:arm64 .
+      - name: Verify tools, backup and replica services
+        run: |
+          docker run --rm --entrypoint catscan-version "$IMAGE:$GITHUB_SHA"
+          docker run --rm --entrypoint sh "$IMAGE:$GITHUB_SHA" -c 'command -v cats && command -v cats-scan && command -v cats-patch'
+          docker run --rm --network none -e BACKUP_MODULE=/opt/backup/backup.py --entrypoint python3 \
+            -v "$PWD/deploy/backup:/tests:ro" "$IMAGE:$GITHUB_SHA" /tests/test_backup.py
+          python scripts/verify-replica-image.py --image "$IMAGE:$GITHUB_SHA"
+      - name: Verify restricted runtime-agent mode on both platforms
+        run: |
+          for arch in amd64 arm64; do
+            image="$IMAGE:$GITHUB_SHA"
+            if [[ "$arch" == arm64 ]]; then image=cats-ci:arm64; fi
+            docker run --rm --platform "linux/$arch" --user 10001:10001 --cap-drop ALL \
+              --read-only --network none --entrypoint /opt/cats-venv/bin/python "$image" \
+              -c 'import os, pathlib; assert os.getuid() == 10001; assert callable(pathlib.Path.is_file)'
+            docker run --rm --platform "linux/$arch" --user 10001:10001 --cap-drop ALL \
+              --read-only --network none -e CATS_ROLE=runtime-agent "$image" run --help
+          done
+      - uses: helm/kind-action@v1.12.0
+        with:
+          version: v0.27.0
+          kubectl_version: v1.32.2
+          cluster_name: cats-runtime-smoke
+          wait: 180s
+      - name: Verify live enrollment, runtime observations and PVC identity
+        timeout-minutes: 15
+        run: python runtime-agent/tests/kind_smoke.py "$IMAGE:$GITHUB_SHA"
+      - name: Show collector status if the live check fails
+        if: failure()
+        run: |
+          kubectl --context kind-cats-runtime-smoke -n cats-runtime get pods,pvc --ignore-not-found || true
+          kubectl --context kind-cats-runtime-smoke -n cats-runtime logs deployment/cats-runtime --tail=20 | grep -E '^cats-runtime: [a-z][a-z0-9_]{1,80}$' || true
+      - name: Assemble and inspect the release image index
+        run: |
+          kind delete cluster --name cats-runtime-smoke
+          docker run -d --name cats-ci-registry -p 127.0.0.1:5000:5000 registry:2
+          for arch in amd64 arm64; do
+            image="$IMAGE:$GITHUB_SHA"
+            if [[ "$arch" == arm64 ]]; then image=cats-ci:arm64; fi
+            docker tag "$image" "localhost:5000/cats-tool:$arch"
+            docker push --platform "linux/$arch" "localhost:5000/cats-tool:$arch"
+          done
+          python .github/scripts/build-image-index.py
+      - name: Verify the chart selects the tested image by digest
+        run: python .github/scripts/runtime-chart.py package
+      - uses: docker/login-action@v3
+        if: inputs.publish
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish the shared CATS image and versioned runtime chart
+        id: release
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! command -v skopeo >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y skopeo
+          fi
+          bash .github/scripts/publish-cats.sh
+      - uses: actions/upload-artifact@v4
+        if: steps.release.outputs.chart_published == 'true'
+        with:
+          name: cats-runtime-chart
+          path: dist/cats-runtime-*.tgz

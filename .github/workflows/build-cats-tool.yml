@@ -3,80 +3,35 @@ name: Build CATS tool image
 on:
   push:
     branches: [main]
+  pull_request:
+    paths:
+      - "runtime-agent/**"
+      - "cats-image/**"
+      - "cats-scanner/**"
+      - "portal/app/runtime*.py"
+      - "portal/tests/test_runtime*.py"
+      - ".github/workflows/**"
+      - ".github/scripts/**"
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
-  packages: write
-
-env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/cats-tool
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+  verify:
+    if: github.event_name == 'pull_request' || github.ref != 'refs/heads/main'
+    uses: ./.github/workflows/test-and-package-cats.yml
 
-      - name: Verify action process cleanup on Linux
-        timeout-minutes: 3
-        run: python3 portal/tests/test_action_supervisor.py
-
-      - name: Verify scan archive cleanup on Linux
-        timeout-minutes: 5
-        run: |
-          python3 -m venv "$RUNNER_TEMP/scan-lifecycle-tests"
-          "$RUNNER_TEMP/scan-lifecycle-tests/bin/python" -m pip install 'pytest>=8,<10'
-          "$RUNNER_TEMP/scan-lifecycle-tests/bin/python" -m pytest scanning-main/tests/test_image_archive_lifecycle.py -q
-
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Build the scanner layer first. The final published image contains the
-      # scanner plus the portal and orchestration/API layer.
-      - name: Build CATScan base
-        run: |
-          docker build --pull \
-            --build-arg GRYPE_DB_REFRESH=${{ github.run_id }} \
-            -f cats-scanner/Dockerfile \
-            -t catscan-base:${{ github.sha }} \
-            .
-
-      - name: Build unified image
-        run: |
-          docker build \
-            --build-arg CATSCAN_BASE_IMAGE=catscan-base:${{ github.sha }} \
-            -f cats-image/Dockerfile.all-in-one \
-            -t "$IMAGE:${{ github.sha }}" \
-            -t "$IMAGE:latest" .
-
-      - name: Smoke test
-        timeout-minutes: 5
-        run: |
-          # The default entrypoint launches a long-running CATS role and does
-          # not dispatch CLI arguments. Run these checks directly instead.
-          docker run --rm --entrypoint catscan-version "$IMAGE:${{ github.sha }}"
-          docker run --rm --entrypoint sh "$IMAGE:${{ github.sha }}" -c 'command -v cats && command -v cats-scan && command -v cats-patch'
-
-      - name: Verify bundled backups without network access
-        timeout-minutes: 5
-        run: |
-          docker run --rm --network none -e BACKUP_MODULE=/opt/backup/backup.py --entrypoint python3 \
-            -v "$PWD/deploy/backup:/tests:ro" "$IMAGE:${{ github.sha }}" /tests/test_backup.py
-
-      - name: Verify full image in replica mode
-        timeout-minutes: 10
-        run: python3 scripts/verify-replica-image.py --image "$IMAGE:${{ github.sha }}"
-
-      - name: Push image
-        run: |
-          docker push "$IMAGE:${{ github.sha }}"
-          docker push "$IMAGE:latest"
+  release:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/test-and-package-cats.yml
+    with:
+      publish: true
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: publish-cats-main
+      cancel-in-progress: false
