@@ -38,6 +38,10 @@ Receiver setup details are available in [Syslog over TLS](https://www.rfc-editor
 
 An additional component can use an individually enrolled, revocable source credential to POST an event to the HTTPS HQ endpoint `/api/v1/component-logs/events`. Supply the bearer token, a source-unique `event_id`, a timezone-aware `timestamp`, a permitted `category`, and a JSON object in `data`. Retain the record until HQ returns `accepted` or `duplicate` with the same ID. HQ binds attribution to the authenticated source. Use a separate token for each independent reporter and retain the same enrollment when rotating credentials.
 
+For socket permissions, source labels, filtering and spool sizing on a Compose host, see [Compose component logs](compose-component-logs.md).
+
+Large replica audit envelopes travel as numbered records. Search the reported data at HQ for `original_event_id` and `format = cats.event-fragment.v1`. Group by `sha256`, order by the zero-based `index`, base64-decode each `content_b64` and concatenate all `count` pieces. The SHA-256 of the resulting UTF-8 JSON must match `sha256`. The replica keeps the original queued until HQ acknowledges every piece.
+
 ## Event coverage and recovery
 
 Each committed HQ security audit row generates a copy for each enabled audit destination. That includes recorded user and robot actions, worker actions, approval changes, OCI access decisions and attributed remote audit records. The envelope carries an event ID, timestamp, category and redacted data. A reported audit preserves the remote event ID and reporting source. Reported operational events include the time HQ received them as well as the event's source timestamp.
@@ -49,3 +53,9 @@ During an outage, pending copies accumulate in the operational database. Monitor
 Component operational history defaults to seven days and 50,000 records. Each destination can hold 50,000 pending operational log copies by default and records an overflow count. Committed security audit copies remain queued during a receiver outage. Monitor free disk space on HQ, replicas and validator appliances. Docker buffers a limited number of service output records in daemon memory before the local collector acknowledges them. Restarting Docker during a collection outage can lose this buffered output. The collector filters successful collection requests, sensitive database statement text and credentials.
 
 A successful UDP send only establishes that CATS sent the datagram. A successful TCP/TLS write, HEC acceptance, or Azure ingestion response is also distinct from finding the event in the final index or table. Use the test ID to verify indexing. To change recipients, add and test the new destination. Removing a paused destination with pending copies requires confirmation of the current count and records that count in the local audit trail.
+
+### Reconstructing oversized audit events
+
+HQ splits a security audit event when its UTF-8 JSON envelope exceeds 60 KiB for syslog or Azure Monitor, or 4 MiB for Splunk HEC. Each part carries up to 30 KiB of the original redacted JSON in base64. These thresholds leave room for protocol headers and keep Azure field values below its ingestion limit. Configure the syslog receiver to accept messages of at least 64 KiB. [Azure Monitor ingestion limits](https://learn.microsoft.com/en-us/azure/azure-monitor/fundamentals/service-limits#logs-ingestion-api)
+
+Search for `data.format = cats.event-fragment.v1` and the original HQ event ID in `data.original_event_id`. For component audit events, `data.source_id`, `data.source_name` and `data.source_event_id` identify the reporting component and its local event when available. Group by `data.sha256`, deduplicate by `data.index`, and check that every index from zero through `data.count - 1` is present. Decode each `data.content_b64` separately, concatenate the bytes in index order, and verify the SHA-256 digest before parsing the resulting JSON. On retry, HQ resumes from the last recorded transport acknowledgment. A repeat of a part has the same event ID.

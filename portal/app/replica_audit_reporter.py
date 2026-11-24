@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, insert, select, text, update
 
 from .audit_forward_store import ForwardDestination, pending_count, utcnow
+from .event_fragments import canonical_bytes, send_fragments
 from .audit_forward_transports import DeliveryError, _https, _json, _post, _tls_context
 from .auth import require_user
 from .database import get_db
@@ -18,6 +19,7 @@ from .operating_mode import is_replica
 
 RELAY_ID = -1
 INGEST_PATH = "/api/v1/component-logs/events"
+HQ_MAX_BYTES = 1024 * 1024
 router = APIRouter()
 logger = logging.getLogger("cats.replica_audit_reporter")
 
@@ -52,7 +54,7 @@ def install_portal_relay(connection):
             enabled=True, include_audit=True, include_diagnostics=True, include_operational=True))
 
 
-def relay_sender(environment):
+def relay_sender(environment, *, sessions=None):
     """Validate the deployment-provided HTTPS origin once. No redirects or database endpoints."""
     url = environment.get("CATS_AUDIT_HQ_URL", "").strip()
     token = environment.get("CATS_AUDIT_HQ_TOKEN", "").strip()
@@ -75,14 +77,24 @@ def relay_sender(environment):
             raise ValueError("Invalid public CA certificate in CATS_AUDIT_HQ_CA_B64") from exc
     endpoint = parts._replace(path=INGEST_PATH).geturl()
 
+    def post_event(event_id, content):
+        ack = _post("CATS HQ", endpoint, content, {
+            "Authorization": "Bearer " + token, "Content-Type": "application/json",
+        }, ca)
+        if ack.get("event_id") != event_id or ack.get("status") not in ("accepted", "duplicate"):
+            raise DeliveryError("CATS HQ did not acknowledge this event ID")
+
     def send(kind, config, secret, event):
         if kind != "portal" or event["category"] not in ("audit", "diagnostic", "operational"):
             raise DeliveryError("Invalid event for the HQ relay")
-        ack = _post("CATS HQ", endpoint, _json(event), {
-            "Authorization": "Bearer " + token, "Content-Type": "application/json",
-        }, ca)
-        if ack.get("event_id") != event["event_id"] or ack.get("status") not in ("accepted", "duplicate"):
-            raise DeliveryError("CATS HQ did not acknowledge this event ID")
+        # Canonical bytes keep the fragment identifiers and offsets stable across retries.
+        content = canonical_bytes(event)
+        if len(content) <= HQ_MAX_BYTES:
+            post_event(event["event_id"], content)
+        else:
+            from .audit_forward_worker import BackgroundSession
+            send_fragments(event, content, lambda part: post_event(part["event_id"], _json(part)),
+                           sessions=sessions or BackgroundSession, destination_id=RELAY_ID, lease=config.get("relay_lease_token"))
     return send
 
 

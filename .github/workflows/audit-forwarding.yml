@@ -18,6 +18,8 @@ on:
       - "scanning-main/scripts/phase_logs.py"
       - "templates/compose*.yaml"
       - "portal/tests/test_local_login_audit.py"
+      - "portal/frontend/src/features/log_forwarding*"
+      - "portal/frontend/src/features/component_log_history*"
       - ".github/workflows/audit-forwarding.yml"
 
 permissions:
@@ -57,3 +59,21 @@ jobs:
             tests/test_replica_image_deployment.py tests/test_worker_isolation_deployment.py
       - name: Verify the standalone scanner phase journal
         run: python -m pytest -q scanning-main/tests/test_phase_logs.py scanning-main/tests/test_cats_cli_contract.py
+
+  settings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    defaults:
+      run:
+        working-directory: portal/frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: npm install --global pnpm@11.19.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test log_forwarding component_log_history
+      - run: pnpm build

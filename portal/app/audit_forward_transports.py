@@ -283,17 +283,42 @@ def _azure(config, secret, event):
         raise
 
 
-def send_event(kind: str, config: dict, secret: str, event: dict) -> None:
+def _send_one(kind, config, secret, event):
+    if kind == "syslog":
+        _syslog(config, event)
+    elif kind == "splunk":
+        _splunk(config, secret, event)
+    else:
+        _azure(config, secret, event)
+
+
+def send_event(kind: str, config: dict, secret: str, event: dict, *, checkpoint=None) -> None:
     config = validate_config(kind, config)
     if kind != "syslog" and (not isinstance(secret, str) or not secret):
         raise ValueError("Missing destination credential")
     try:
-        if kind == "syslog":
-            _syslog(config, event)
-        elif kind == "splunk":
-            _splunk(config, secret, event)
-        else:
-            _azure(config, secret, event)
+        if event["category"] == "audit":
+            from .event_fragments import FORMAT, canonical_bytes, send_fragments
+            # Leave headroom for syslog headers, Azure field limits, and the Splunk HEC wrapper.
+            threshold = 4 * 1024 * 1024 if kind == "splunk" else 60 * 1024
+            content = canonical_bytes(event)
+            if len(content) > threshold:
+                if event["data"].get("format") == FORMAT and event["event_id"].startswith("fragment:"):
+                    raise DeliveryError("Existing audit fragment exceeds the collector size limit")
+                from .diagnostics import redact_audit_value
+                safe = {**event, "data": redact_audit_value(event["data"])}
+                original = safe["data"].get("detail")
+                fields = original if isinstance(original, dict) and safe["data"].get("action") == "component.reported_audit" else {}
+                source_id = safe["event_id"].partition(":audit:")[0] if ":audit:" in safe["event_id"] else None
+                metadata = {"source_event_id": safe["event_id"]}
+                for key, value in (("source_id", fields.get("source_id", source_id)), ("source_name", fields.get("source_name")),
+                                   ("source_event_id", fields.get("source_event_id"))):
+                    if isinstance(value, str) and 0 < len(value) <= 200:
+                        metadata[key] = value
+                send_fragments(safe, canonical_bytes(safe), lambda part: _send_one(kind, config, secret, part),
+                               metadata=metadata, **(checkpoint or {}))
+                return
+        _send_one(kind, config, secret, event)
     except (URLError, OSError, http.client.HTTPException) as error:
         cause = error.reason if isinstance(error, URLError) else error
         if isinstance(cause, ssl.SSLCertVerificationError):

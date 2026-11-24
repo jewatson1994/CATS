@@ -58,6 +58,31 @@ def audit(db, action, **values):
     db.execute(insert(AuditEvent.__table__).values(action=action, target_type="service", **values))
 
 
+def test_native_audit_fragments_keep_delivery_pending_until_complete(sessions, monkeypatch):
+    from app import audit_forward_transports as transports
+    with sessions.begin() as db:
+        dest = destination(db, include_audit=True)
+        dest.config = {"host": "collector", "transport": "udp"}
+        audit(db, "release.approved", detail={"evidence": ["x" * 2048] * 50})
+    attempts = []
+    def send(kind, config, secret, part):
+        attempts.append(part)
+        if len(attempts) == 2:
+            raise transports.DeliveryError("Interrupted")
+    monkeypatch.setattr(transports, "_send_one", send)
+    assert deliver_one(sessions)
+    with sessions.begin() as db:
+        row = db.scalar(select(ForwardDelivery))
+        assert row.delivered_at is None and row.payload is not None and row.relay_fragment_next == 1
+    assert deliver_one(sessions, clock=lambda: utcnow() + timedelta(hours=1))
+    with sessions() as db:
+        row = db.scalar(select(ForwardDelivery))
+        assert row.delivered_at is not None and row.payload is None
+    parts = [part["data"]["index"] for part in attempts]
+    assert parts == [0, 1, *range(1, attempts[0]["data"]["count"])]
+    assert attempts[1] == attempts[2]
+
+
 def test_transactional_capture_filters_and_redaction(sessions):
     with sessions.begin() as db:
         dest = destination(db)
@@ -255,3 +280,22 @@ def test_only_hq_forwards_external_and_replicas_use_internal_portal_transport(se
     while deliver_one(sessions, sender):
         pass
     assert sent == ["portal", "portal", "syslog", "syslog"]
+
+
+def test_additive_fragment_cursor_upgrade_preserves_pending_rows(sessions):
+    with sessions.begin() as db:
+        dest = destination(db)
+        audit(db, "queued.before.upgrade")
+        conn = db.connection()
+        for column in ("relay_fragment_next", "relay_fragment_sha256"):
+            conn.exec_driver_sql(f"ALTER TABLE audit_forward_deliveries DROP COLUMN {column}")
+        upgrade_connection(conn)
+        upgrade_connection(conn)
+        row = db.scalars(select(ForwardDelivery)).one()
+        assert row.destination_id == dest.id and row.payload["action"] == "queued.before.upgrade"
+        assert row.relay_fragment_next == 0 and row.relay_fragment_sha256 is None
+        row.relay_fragment_next, row.relay_fragment_sha256 = 7, "a" * 64
+    with sessions.begin() as db:
+        upgrade_connection(db.connection())
+        row = db.scalars(select(ForwardDelivery)).one()
+        assert row.relay_fragment_next == 7 and row.relay_fragment_sha256 == "a" * 64

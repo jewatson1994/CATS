@@ -127,7 +127,13 @@ def deliver_one(session_factory=BackgroundSession, sender=None, clock=utcnow, *,
     error = None
     try:
         event = dict(claim.event, data=redact_audit_value(claim.event["data"]))
-        (sender or send_event)(claim.kind, claim.config, decrypt_secret(claim.secret_ciphertext), event)
+        config = {**claim.config, "relay_lease_token": claim.lease} if portal_only else claim.config
+        secret = decrypt_secret(claim.secret_ciphertext)
+        if sender is None:
+            send_event(claim.kind, config, secret, event, checkpoint={
+                "sessions": session_factory, "destination_id": claim.destination_id, "lease": claim.lease})
+        else:
+            sender(claim.kind, config, secret, event)
     except DeliveryError as exc:
         # Transport creates these errors from fixed text and numeric status only.
         error = str(exc)[:300]

@@ -68,6 +68,8 @@ class ForwardDelivery(Base):
     available_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     lease_token: Mapped[str | None] = mapped_column(String(36))
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    relay_fragment_next: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    relay_fragment_sha256: Mapped[str | None] = mapped_column(String(64))
 
 
 class ForwardIdentity(Base):
@@ -206,6 +208,12 @@ def upgrade_connection(connection):
     # Called from the portal's serialized startup migration, following diagnostics.
     for model in (ForwardIdentity, ForwardDestination, ForwardDelivery, ComponentOperationalEvent):
         model.__table__.create(connection, checkfirst=True)
+    delivery_columns = {c["name"] for c in inspect(connection).get_columns(ForwardDelivery.__tablename__)}
+    if "relay_fragment_next" not in delivery_columns:
+        connection.exec_driver_sql("ALTER TABLE audit_forward_deliveries ADD COLUMN "
+                                   "relay_fragment_next INTEGER NOT NULL DEFAULT 0")
+    if "relay_fragment_sha256" not in delivery_columns:
+        connection.exec_driver_sql("ALTER TABLE audit_forward_deliveries ADD COLUMN relay_fragment_sha256 VARCHAR(64)")
     for index in ForwardDelivery.__table__.indexes:
         if index.name == "ix_forward_ops_dest":
             index.create(connection, checkfirst=True)

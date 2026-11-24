@@ -72,9 +72,65 @@ def test_syslog_wire_format(monkeypatch, transport):
     assert b"\n" not in message
 
 
-def test_udp_oversize_is_explicit_and_never_truncated():
+def test_udp_oversize_diagnostic_is_explicit_and_never_truncated():
     with pytest.raises(RuntimeError, match="exceeds a UDP datagram"):
-        tx.send_event("syslog", {"host": "collector", "transport": "udp"}, "", {**EVENT, "data": {"body": "x" * 66000}})
+        tx.send_event("syslog", {"host": "collector", "transport": "udp"}, "",
+                      {**EVENT, "category": "diagnostic", "data": {"body": "x" * 66000}})
+
+
+@pytest.mark.parametrize("kind,config,size", [
+    ("syslog", {"host": "collector", "transport": "udp"}, 80_000), ("azure", AZURE, 1_100_000),
+    ("splunk", {"url": "https://collector:8088"}, 4_200_000)])
+def test_large_external_audits_reconstruct_after_retry(kind, config, size, monkeypatch):
+    import base64
+    from hashlib import sha256
+    captured = []
+    fail = True
+    def collect(actual_kind, actual_config, secret, item):
+        assert actual_kind == kind
+        captured.append(item)
+        if fail and item["data"]["index"] == 1:
+            raise tx.DeliveryError("Test receiver rejected part")
+    monkeypatch.setattr(tx, "_send_one", collect)
+    detail = {"source_id": "validator:abc", "source_name": "Validator A", "source_event_id": "local-sequence-9",
+              "description": "a" * size, "password": "discard-me"}
+    event = {**EVENT, "data": {"action": "component.reported_audit", "detail": detail}}
+    with pytest.raises(tx.DeliveryError, match="receiver rejected"):
+        tx.send_event(kind, config, "token", event)
+    attempted = captured.copy()
+    captured.clear()
+    fail = False
+    tx.send_event(kind, config, "token", event)
+    assert captured[:2] == attempted
+    assert len(captured) == captured[0]["data"]["count"]
+    assert all(len(tx._json(part)) < 60 * 1024 for part in captured)
+    original = b"".join(base64.b64decode(part["data"]["content_b64"], validate=True) for part in captured)
+    digest = sha256(original).hexdigest()
+    assert [part["event_id"] for part in captured] == [f"fragment:{digest}:{i}" for i in range(len(captured))]
+    for part in captured:
+        assert part["data"]["source_event_id"] == "local-sequence-9"
+        assert part["data"]["original_event_id"] == EVENT["event_id"] and part["data"]["source_id"] == "validator:abc"
+    assert json.loads(original) == {**event, "data": {**event["data"], "detail": {**detail, "password": "[REDACTED]"}}}
+
+
+def test_existing_fragment_passes_unchanged_and_is_never_split_again(monkeypatch):
+    captured = []
+    monkeypatch.setattr(tx, "_send_one", lambda kind, config, secret, item: captured.append(item))
+    existing = {**EVENT, "event_id": "fragment:" + "a" * 64 + ":0",
+                "data": {"format": "cats.event-fragment.v1", "content_b64": "abc"}}
+    tx.send_event("syslog", {"host": "collector"}, "", existing)
+    assert captured == [existing]
+    with pytest.raises(tx.DeliveryError, match="Existing audit fragment"):
+        tx.send_event("syslog", {"host": "collector"}, "", {**existing, "data": {**existing["data"], "content_b64": "x"*70000}})
+
+
+def test_syslog_preserves_relayed_operational_severity(monkeypatch):
+    socket_mock = MagicMock()
+    socket_mock.__enter__.return_value = socket_mock
+    monkeypatch.setattr(socket, "create_connection", lambda *args, **kwargs: socket_mock)
+    tx.send_event("syslog", {"host": "collector", "transport": "tcp"}, "",
+                  {**EVENT, "category": "operational", "data": {"reported": {"reported": {"severity": "error"}}}})
+    assert socket_mock.sendall.call_args.args[0].split(b" ", 1)[1].startswith(b"<131>1 ")
 
 
 def test_splunk_envelope_and_embedded_failure(monkeypatch):

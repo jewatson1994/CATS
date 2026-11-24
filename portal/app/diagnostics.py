@@ -22,7 +22,10 @@ _PUBLIC_CONTEXT = {"stage", "failed_stage", "last_successful_stage", "worker_id"
 
 def _redact_text(value):
     value = re.sub(r"-----BEGIN [^-]*PRIVATE KEY-----.*?(?:-----END [^-]*PRIVATE KEY-----|$)", "[REDACTED PRIVATE KEY]", value, flags=re.S)
-    value = re.sub(r"(?i)([a-z][a-z0-9+.-]*://)[^\s/@]+(?::[^\s/@]*)?@", r"\1[REDACTED]@", value)
+    # Match the fixed authority delimiter so long unrelated tokens are scanned
+    # once even when the same field contains credentialed URLs elsewhere.
+    if "://" in value and "@" in value:
+        value = re.sub(r"(?<=://)[^\s/@]+@", "[REDACTED]@", value)
     value = re.sub(r"(?i)\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+", "[REDACTED AUTHORIZATION]", value)
     value = re.sub(r"cats_project_[A-Za-z0-9_.~-]+", "[REDACTED PROJECT TOKEN]", value)
     value = re.sub(r"cats-log-[A-Za-z0-9_-]+", "[REDACTED LOG SOURCE TOKEN]", value)
@@ -31,7 +34,9 @@ def _redact_text(value):
     value = re.sub(r"(?i)(--(?:password|passwd|token|secret|api-key|client-secret|registry-password)\s+)(?:\"[^\"]*(?:\"|$)|'[^']*(?:'|$)|\S+)", r"\1[REDACTED]", value)
     value = re.sub(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*)?", "[REDACTED TOKEN]", value)
     # Signed URLs and arbitrary query parameters are not useful diagnostic evidence.
-    value = re.sub(r"((?:https?|oci)://[^\s?#]+)\?[^\s#]*", r"\1?[REDACTED QUERY]", value)
+    if "://" in value and "?" in value:
+        value = re.sub(r"((?:https?|oci)://[^\s?#]+)(\?[^\s#]*)?", lambda match:
+                       match[1] + "?[REDACTED QUERY]" if match[2] is not None else match[1], value, flags=re.I)
     return value
 
 

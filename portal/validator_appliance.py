@@ -28,7 +28,8 @@ def main() -> int:
             if stopping:
                 break
             child = subprocess.Popen([sys.executable, "-u", "-m", module],
-                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                     env={**os.environ, "CATS_VALIDATOR_CAPTURED_BY_SUPERVISOR": "1"})
             children.append(child)
             for stream, console, channel in ((child.stdout, sys.stdout, "stdout"), (child.stderr, sys.stderr, "stderr")):
                 reader = threading.Thread(target=capture_output, args=(stream, console, module, channel), daemon=True)

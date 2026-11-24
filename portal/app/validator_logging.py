@@ -115,6 +115,8 @@ class ServerEvents(logging.Handler):
 
 
 def attach_server_logging():
+    if os.getenv("CATS_VALIDATOR_CAPTURED_BY_SUPERVISOR") == "1":
+        return  # The appliance supervisor records the formatted stream, including early startup.
     for logger in (logging.getLogger(), logging.getLogger("uvicorn")):
         if not any(isinstance(handler, ServerEvents) for handler in logger.handlers):
             logger.addHandler(ServerEvents(level=logging.INFO))
@@ -144,11 +146,14 @@ def capture_output(stream, console, listener, channel):
                 if re.search(r"-----END [^-\n]*PRIVATE KEY-----", text):
                     private_key = False
                 continue
-            # Uvicorn access/diagnostic logging already goes through the structured server hooks.
-            if re.match(r"^(?:INFO|WARNING|ERROR|DEBUG|CRITICAL):\s", text) or "local_log_journal_unavailable" in text:
+            # Authentication-aware middleware records each request without leaking URL/query data.
+            if (re.match(r'^INFO:\s+\S+\s+-\s+"[A-Z]+\s+.*\s+HTTP/[^"]+"\s+\d{3}', text)
+                    or "local_log_journal_unavailable" in text):
                 continue
+            level = re.match(r"^(INFO|WARNING|ERROR|DEBUG|CRITICAL):", text)
             event("operational", "container_output", listener=listener, stream=channel,
-                  severity="warning" if channel == "stderr" else "info", message=redact_audit_value(text.rstrip())[:4096])
+                  severity=level[1].lower() if level else ("warning" if channel == "stderr" else "info"),
+                  message=redact_audit_value(text.rstrip())[:4096])
 
 
 def audit_request(app, listener):

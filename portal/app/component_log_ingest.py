@@ -235,7 +235,9 @@ async def receive(request: Request, db=Depends(get_db)):
 def _public(source):
     return {"id": source.id, "name": source.name, "allow_audit": source.allow_audit,
             "allow_diagnostics": source.allow_diagnostics, "revoked": source.token_digest is None,
-            "created_at": source.created_at}
+            "created_at": source.created_at,
+            "last_received_at": datetime.fromtimestamp(source.rate_minute * 60, timezone.utc)
+            if source.rate_minute else None}
 
 
 def _issue(db, source, auth, response, action):

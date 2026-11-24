@@ -1,5 +1,7 @@
 import {useEffect, useState, type FormEvent} from 'react';
 import {requestJson, type PageData} from '../api';
+import {LogSources, ReplicaRelay} from './log_forwarding_sources';
+import {ReceivedByHQ} from './component_log_history';
 
 const destinationsUrl = '/api/admin/log-forwarding/destinations';
 const kinds = {syslog: 'Syslog', splunk: 'Splunk HTTP Event Collector', azure: 'Azure Log Analytics'};
@@ -13,8 +15,11 @@ interface Destination {
   enabled: boolean;
   audit: boolean;
   diagnostics: boolean;
+  operational: boolean;
   has_secret: boolean;
   pending: number;
+  dropped_operational: number;
+  replay_pending: boolean;
   last_sent_at: string | null;
   last_error: string | null;
 }
@@ -25,6 +30,7 @@ interface DestinationInput {
   enabled: boolean;
   audit: boolean;
   diagnostics: boolean;
+  operational: boolean;
   secret?: string;
 }
 
@@ -52,8 +58,8 @@ function DestinationEditor({destination, busy, onSave, onCancel}: {
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const fields = new FormData(e.currentTarget);
-    const audit = fields.has('audit'), diagnostics = fields.has('diagnostics');
-    if (fields.has('enabled') && !audit && !diagnostics) {setError('Select at least one event source.'); return;}
+    const audit = fields.has('audit'), diagnostics = fields.has('diagnostics'), operational = fields.has('operational');
+    if (fields.has('enabled') && !audit && !diagnostics && !operational) {setError('Select at least one event source.'); return;}
     setError('');
     const configKeys = kind === 'syslog' ? ['host'] : kind === 'splunk' ? ['url', 'index', 'sourcetype']
       : ['endpoint', 'rule_id', 'stream', 'tenant_id', 'client_id', 'cloud'];
@@ -66,7 +72,7 @@ function DestinationEditor({destination, busy, onSave, onCancel}: {
     if (kind === 'syslog') {values.transport = transport; values.port = Number(port);}
     const secret = fields.get('secret');
     onSave({name: String(fields.get('name') ?? '').trim(), kind, config: values,
-      enabled: fields.has('enabled'), audit, diagnostics, ...(typeof secret === 'string' && secret ? {secret} : {})});
+      enabled: fields.has('enabled'), audit, diagnostics, operational, ...(typeof secret === 'string' && secret ? {secret} : {})});
   }
 
   return <form onSubmit={submit} aria-label={destination ? 'Edit log destination' : 'New log destination'}>
@@ -107,6 +113,7 @@ function DestinationEditor({destination, busy, onSave, onCancel}: {
       <fieldset><legend>Event sources</legend>
         <label className="policy-check"><input name="audit" type="checkbox" defaultChecked={destination?.audit ?? true}/>Security audit trail</label>
         <label className="policy-check"><input name="diagnostics" type="checkbox" defaultChecked={destination?.diagnostics ?? false}/>Operational diagnostics</label>
+        <label className="policy-check"><input name="operational" type="checkbox" defaultChecked={destination?.operational ?? false}/>Component operational logs</label>
       </fieldset>
       <label className="policy-check"><input name="enabled" type="checkbox" defaultChecked={destination?.enabled ?? true}/>Enable forwarding</label>
       {error && <p role="alert">{error}</p>}
@@ -158,10 +165,10 @@ function ForwardingPanel({csrf}: {csrf: string}) {
     });
   }
   function replay(row: Destination) {
-    if (!window.confirm('Forward retained audit history to ' + row.name + '?')) return;
+    if (!window.confirm('Forward all audit events stored at HQ to ' + row.name + '?')) return;
     void mutate(async () => {
       await requestJson(destinationsUrl + '/' + row.id + '/replay', {method: 'POST', headers});
-      return 'Retained audit replay requested for ' + row.name + '.';
+      return 'Audit replay requested for ' + row.name + '.';
     });
   }
   function remove(row: Destination) {
@@ -177,7 +184,7 @@ function ForwardingPanel({csrf}: {csrf: string}) {
   }
 
   return <section id="log-forwarding" className="panel padded configuration-panel" aria-label="Log forwarding">
-    <h2>Log forwarding</h2><p>Send events from all CATS groups to one or more receivers.</p>
+    <h2>Log forwarding</h2><p>Send selected events from HQ to one or more external receivers. These settings apply across CATS groups.</p>
     <div className="config-actions"><button type="button" disabled={busy || editor !== null} onClick={() => {setError(''); setNotice(''); setEditor('new');}}>Add destination</button>
       <button type="button" className="secondary-button" disabled={busy} onClick={() => setRevision(value => value + 1)}>Refresh status</button></div>
     {readError && <p role="alert">{readError}</p>}
@@ -190,17 +197,19 @@ function ForwardingPanel({csrf}: {csrf: string}) {
       <thead><tr><th>Destination</th><th>Sources</th><th>Delivery status</th><th>Actions</th></tr></thead>
       <tbody>{destinations.map(row => <tr key={row.id}>
         <td><strong>{row.name}</strong><br/>{kinds[row.kind]}<br/><small>{row.kind === 'syslog' ? row.config.host + ':' + row.config.port : row.config.url || row.config.endpoint}</small></td>
-        <td>{[row.audit && 'Security audit', row.diagnostics && 'Diagnostics'].filter(Boolean).join(', ')}</td>
+        <td>{[row.audit && 'Security audit', row.diagnostics && 'Diagnostics', row.operational && 'Component logs'].filter(Boolean).join(', ')}</td>
         <td>{row.enabled ? 'Enabled' : 'Paused'} · {row.pending} queued<br/>Last sent: {row.last_sent_at ? <time dateTime={row.last_sent_at}>{new Date(row.last_sent_at).toLocaleString()}</time> : 'Never'}
-          {row.last_error && <p>Last error: {row.last_error}</p>}</td>
+          {row.dropped_operational > 0 && <p>Operational copies dropped: {row.dropped_operational}</p>}{row.replay_pending && <p>Preparing stored audit events for delivery.</p>}{row.last_error && <p>Last error: {row.last_error}</p>}</td>
         <td><div className="config-actions"><button type="button" className="secondary-button" disabled={busy || editor !== null} onClick={() => {setError(''); setNotice(''); setEditor(row);}}>Edit</button>
           <button type="button" className="secondary-button" disabled={busy || editor !== null} onClick={() => test(row)}>Send test event</button>
-          {row.enabled && row.audit && <button type="button" className="secondary-button" disabled={busy || editor !== null} onClick={() => replay(row)}>Replay retained audit</button>}
+          {row.enabled && row.audit && <button type="button" className="secondary-button" disabled={busy || editor !== null || row.replay_pending} onClick={() => replay(row)}>Replay all stored audit events</button>}
           {!row.enabled && <button type="button" className="secondary-button" disabled={busy || editor !== null} onClick={() => remove(row)}>Remove</button>}</div></td>
       </tr>)}</tbody></table></div>}
   </section>;
 }
 
 export function LogForwarding({data}: {data: PageData}) {
-  return data.may_manage_log_forwarding === true ? <ForwardingPanel csrf={data.csrf_token ?? ''}/> : null;
+  if (data.cats_mode === 'replica' || data.may_view_log_relay === true) return data.may_view_log_relay === true ? <ReplicaRelay/> : null;
+  if (data.may_manage_log_forwarding !== true) return null;
+  return <><ForwardingPanel csrf={data.csrf_token ?? ''}/><LogSources csrf={data.csrf_token ?? ''}/><ReceivedByHQ/></>;
 }

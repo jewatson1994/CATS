@@ -1,3 +1,6 @@
+import base64
+from datetime import timedelta
+from hashlib import sha256
 import json
 from types import SimpleNamespace
 
@@ -12,8 +15,10 @@ from app.audit_forward_store import (
 from app.audit_forward_transports import DeliveryError
 from app.audit_forward_worker import deliver_one
 from app.diagnostic_store import DiagnosticEvent
+from app.diagnostics import redact_audit_value
 from app.models import AuditEvent
 from test_audit_forward_store import audit, destination, sessions
+from test_component_log_ingest import PATH, enroll, site
 
 
 def test_replica_captures_prior_audit_and_each_new_category_before_enrollment(sessions, monkeypatch):
@@ -69,6 +74,61 @@ def test_hq_acknowledgement_and_pinned_origin(monkeypatch):
         send("portal", {}, "", event)
     with pytest.raises(DeliveryError):
         send("splunk", {}, "", event)
+
+
+def test_large_event_resumes_after_lost_ack_and_reconstructs_redacted_audit(sessions, site, monkeypatch):
+    client, hq, _ = site
+    source_id, credentials = enroll(client, allow_audit=True)
+    monkeypatch.setenv("CATS_MODE", "replica")
+    with sessions.begin() as db:
+        upgrade_connection(db.connection())
+        audit(db, "many.components", detail={"components": ["worker Ω" * 150] * 1000, "password": "unsafe"})
+    attempts = []
+    def post(operation, url, body, headers, ca):
+        assert len(body) < 65507
+        event = json.loads(body)
+        index = event["data"]["index"]
+        attempts.append(index)
+        with monkeypatch.context() as remote:
+            remote.setenv("CATS_MODE", "full")
+            result = client.post(PATH, content=body, headers=headers)
+        assert result.status_code == 200, result.text
+        ack = result.json()
+        if index == 1 and ack["status"] == "accepted":
+            raise DeliveryError("HQ acknowledgment lost")
+        return ack
+    monkeypatch.setattr(reporter, "_post", post)
+    send = reporter.relay_sender({"CATS_AUDIT_HQ_URL": "https://hq.test",
+                                  "CATS_AUDIT_HQ_TOKEN": credentials["Authorization"][7:]}, sessions=sessions)
+    now = utcnow()
+    assert deliver_one(sessions, send, lambda: now, portal_only=True)
+    with sessions() as db:
+        assert pending_count(db, reporter.RELAY_ID) == 1
+    assert attempts == [0, 1]
+    assert deliver_one(sessions, send, lambda: now + timedelta(minutes=1), portal_only=True)
+    with hq() as db:
+        rows = db.scalars(select(AuditEvent).where(AuditEvent.target_id == "enrolled:" + source_id,
+                                                    AuditEvent.action == "component.reported_audit")).all()
+        parts = [row.detail["reported"] for row in rows]
+    captured = {part["index"]: part for part in parts}
+    count = captured[0]["count"]
+    assert len(parts) == len(captured) == count
+    assert attempts == [0, 1, *range(1, count)]
+    raw = b"".join(base64.b64decode(captured[i]["content_b64"], validate=True) for i in range(count))
+    assert captured[0]["sha256"] == sha256(raw).hexdigest()
+    original = json.loads(raw)
+    assert original["event_id"] == captured[0]["original_event_id"]
+    assert original["data"]["detail"]["password"] == "[REDACTED]"
+    assert original["data"]["detail"]["components"] == ["worker Ω" * 150] * 1000
+    with sessions() as db:
+        assert pending_count(db, reporter.RELAY_ID) == 0
+
+
+def test_redaction_handles_large_alphanumeric_fields_with_embedded_urls():
+    prefix = "B" * 500000
+    suffix = "https://example.test?q=secret"
+    data = prefix + " (CuStOm://user:pass@hq/path) " + suffix
+    assert redact_audit_value(data) == prefix + " (CuStOm://[REDACTED]@hq/path) https://example.test?[REDACTED QUERY]"
 
 
 @pytest.mark.parametrize("url", ["http://hq.test", "https://user:secret@hq.test", "https://hq.test/splunk", "https://hq.test/?q=1"])

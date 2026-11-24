@@ -10,6 +10,7 @@ import sys
 import tempfile
 import threading
 import time
+from types import SimpleNamespace
 
 import msgpack
 import pytest
@@ -30,6 +31,21 @@ def frame(message, chunk="receipt", service="db", **attrs):
 
 def queued(db):
     return [json.loads(row[0]) for row in db.execute("SELECT payload FROM queued ORDER BY id")]
+
+
+def test_wire_decoder_handles_split_frames_and_acknowledges_each_commit(tmp_path):
+    path = tmp_path / "wire.db"
+    collector.initialize_spool(path)
+    packets = [frame("first", "one", "portal-control"), frame("second", "two", "db-backup")]
+    wire = b"".join(msgpack.packb(packet, use_bin_type=True) for packet in packets)
+    pieces = iter([wire[:2], wire[2:95], wire[95:], b""])
+    acknowledgments = []
+    def sendall(data):
+        with closing(collector.open_spool(path)) as observer:
+            acknowledgments.append((msgpack.unpackb(data, raw=False)["ack"], len(queued(observer))))
+    stream = SimpleNamespace(recv=lambda size: next(pieces), sendall=sendall)
+    collector.DockerStream(stream, None, SimpleNamespace(spool=path, max_bytes=2**20))
+    assert acknowledgments == [("one", 1), ("two", 2)]
 
 
 def test_docker_protocol_ack_is_after_commit_and_redacted_spool_survives_restart(tmp_path):

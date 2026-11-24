@@ -54,6 +54,7 @@ def test_component_is_visible_at_hq_before_external_delivery():
     assert created.status_code == 201, created.text
     source = client.post(prefix + "/sources", headers=headers, json={"name": "Site B"})
     assert source.status_code == 201, source.text
+    assert source.json()["source"]["last_received_at"] is None
     source_auth = {"Authorization": "Bearer " + source.json()["token"]}
     reported = {"category": "operational", "timestamp": "2026-01-02T12:00:00Z", "event_id": "site-b:1",
                 "data": {"component": "scan-worker", "message": "Scan finished " + source.json()["token"]}}
@@ -61,6 +62,7 @@ def test_component_is_visible_at_hq_before_external_delivery():
         posted = client.post("/api/v1/component-logs/events", json=reported, headers=source_auth)
         assert posted.json()["status"] == expected
     seen = client.get(prefix + "/components").json()["components"]
+    assert client.get(prefix + "/sources").json()["sources"][0]["last_received_at"]
     assert len(seen) == 1 and seen[0]["source_name"] == "Site B"
     assert seen[0]["last_event_id"] == reported["event_id"]
     events = client.get(prefix + "/components/events", params={"source_id": seen[0]["source_id"]}).json()["events"]
