@@ -4,7 +4,7 @@ The main, local, and replica templates send container stdout and stderr into the
 
 | Source | Collection |
 | --- | --- |
-| Portal, portal control, OCI proxy, discovery, scanning, patching, remediation, provisioning, risk, security data and export workers | Compose captures both process streams. The event identifies the project, service, container ID, stream and original timestamp. |
+| Portal, portal control, OCI proxy, discovery, polling, settings, scanning, patching, remediation, provisioning, risk, security data and export workers | Compose captures both process streams. The event identifies the project, service, container ID, stream and original timestamp. |
 | PostgreSQL, intelligence database, backups, intelligence initializer/importer and optional local Nginx | The same Compose driver captures the output these processes emit. Nginx TLS passthrough records its configured stream errors. |
 | Audit forwarder and replica reporter | Process output enters local collection. Successful telemetry uploads and the collection pipeline’s own database statements are filtered to prevent repeated events. |
 | Component log collector | The collector records its startup and database outage/recovery events directly in its spool. Its local Docker log remains available for receiver troubleshooting. |

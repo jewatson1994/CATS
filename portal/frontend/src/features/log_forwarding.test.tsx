@@ -1,4 +1,4 @@
-import {fireEvent, render, screen} from '@testing-library/react';
+import {cleanup, fireEvent, render, screen} from '@testing-library/react';
 import {afterEach, expect, it, vi} from 'vitest';
 import {requestJson} from '../api';
 import {LogForwarding} from './log_forwarding';
@@ -10,7 +10,11 @@ const admin = {may_manage_log_forwarding: true, csrf_token: 'csrf'};
 const splunk = {id: 7, name: 'Security Operations', kind: 'splunk', enabled: true, audit: true,
   diagnostics: false, config: {url: 'https://siem.example:8088', index: 'main'}, has_secret: true,
   pending: 3, last_sent_at: '2026-11-23T13:00:00Z', last_error: null};
-afterEach(() => {vi.resetAllMocks(); vi.restoreAllMocks();});
+afterEach(() => {
+  cleanup();
+  api.mockReset();
+  vi.restoreAllMocks();
+});
 
 it('requires the explicit forwarding capability before loading receiver information', () => {
   render(<LogForwarding data={{can: {'config.manage': {'*': true}}}}/>);
@@ -19,7 +23,14 @@ it('requires the explicit forwarding capability before loading receiver informat
 });
 
 it('creates a syslog destination with the selected source and listener details', async () => {
-  api.mockResolvedValue({destinations: []});
+  const saved = {id: 8, name: 'Enclave', kind: 'syslog', enabled: true, audit: false, diagnostics: true,
+    operational: false, config: {host: '10.0.0.8', port: 1514, transport: 'tcp'}, pending: 0, last_sent_at: null};
+  let created = false;
+  api.mockImplementation(async (path, options) => {
+    if (path !== url) throw new Error('Unexpected endpoint: ' + path);
+    if (options?.method === 'POST') {created = true; return saved;}
+    return {destinations: created ? [saved] : []};
+  });
   render(<LogForwarding data={admin}/>);
   await screen.findByText('No forwarding destinations configured.');
   fireEvent.click(screen.getByRole('button', {name: 'Add destination'}));
@@ -34,7 +45,8 @@ it('creates a syslog destination with the selected source and listener details',
   expect(screen.getByRole('alert')).toHaveTextContent('Select at least one event source.');
   fireEvent.click(screen.getByLabelText('Operational diagnostics'));
   fireEvent.click(screen.getByRole('button', {name: 'Save destination'}));
-  await screen.findByText('Destination saved.');
+  expect(await screen.findByRole('row', {name: /Enclave/})).toHaveTextContent('10.0.0.8:1514');
+  expect(screen.getByRole('status')).toHaveTextContent('Destination saved.');
   const mutation = api.mock.calls.find(([, opts]) => opts?.method === 'POST');
   expect(mutation?.[0]).toBe(url);
   expect(mutation?.[1]?.headers).toMatchObject({'X-CSRF-Token': 'csrf'});
